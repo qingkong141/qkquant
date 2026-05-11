@@ -172,3 +172,46 @@ def test_baostock_only_skips_akshare(monkeypatch):
 
     fetcher.fetch_daily("000001", "2024-01-01", "2024-01-31", adjust="hfq")
     assert calls == ["bs"]
+
+
+def test_bulk_update_daily_parallel_akshare_writes_rows(tmp_path, monkeypatch):
+    from qkquant.data.storage import DuckStore
+
+    store = DuckStore(tmp_path / "parallel.duckdb")
+    fetcher = DataFetcher(store=store, source="akshare")
+    calls: list[str] = []
+
+    def fake_fetch_daily(code, start, end, adjust):
+        calls.append(code)
+        return pd.DataFrame(
+            {
+                "code": [code],
+                "trade_date": [pd.Timestamp("2024-01-02")],
+                "open": [10.0],
+                "high": [10.5],
+                "low": [9.8],
+                "close": [10.2],
+                "volume": [1000.0],
+                "amount": [10200.0],
+                "pct_chg": [2.0],
+                "turnover": [0.5],
+                "adjust": ["hfq"],
+            }
+        )
+
+    monkeypatch.setattr(fetcher, "fetch_daily", fake_fetch_daily)
+
+    summary = fetcher.bulk_update_daily(
+        ["000001", "000002"],
+        start="2024-01-01",
+        end="2024-01-02",
+        adjust="hfq",
+        incremental=False,
+        jobs=2,
+    )
+
+    assert sorted(calls) == ["000001", "000002"]
+    assert summary["jobs"] == 2
+    assert summary["total_rows"] == 2
+    assert store.stats()["bars"] == 2
+    store.close()

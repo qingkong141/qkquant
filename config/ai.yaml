@@ -1,0 +1,9 @@
+# AI 分析配置。API Key 不写在这里。
+# 可用环境变量 api_key_env，或在 gitignore 的 config/ai.local.yaml 中写 api_key。
+enabled: true
+provider: openai_compatible
+model: deepseek-chat
+base_url: "https://api.deepseek.com/v1"
+api_key_env: sk-f69801c86b0f410cbb2d45a47bd03c0d
+timeout_seconds: 30
+max_candidates: 8

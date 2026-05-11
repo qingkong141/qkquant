@@ -2,8 +2,8 @@
 #
 # 流程：
 #   1) 切到项目根目录
-#   2) 增量更新 HS300 日线
-#   3) 跑 scan --raw 并推送
+#   2) 增量更新 HS300 日线（优先 akshare 并发抓取）
+#   3) 跑 scan --raw 并推送到已启用通道
 # 日志：logs/daily_scan_YYYYMMDD.log
 #
 # 调度建议：每个交易日 16:30 触发（A股 15:00 收盘，留 1.5 小时给数据源算复权因子）
@@ -28,8 +28,8 @@ if (-not (Test-Path $Qkquant)) {
 "[$(Get-Date)] === daily_scan start ===" | Tee-Object -FilePath $LogFile -Append
 
 # 1) 增量拉今日数据
-"[$(Get-Date)] step 1: update-data ..." | Tee-Object -FilePath $LogFile -Append
-& $Qkquant update-data --universe hs300 *>> $LogFile
+"[$(Get-Date)] step 1: update-data --source akshare --jobs 8 --recent-days 10 ..." | Tee-Object -FilePath $LogFile -Append
+& $Qkquant update-data --universe hs300 --source akshare --jobs 8 --recent-days 10 *>> $LogFile
 if ($LASTEXITCODE -ne 0) {
     "[$(Get-Date)] update-data failed (exit $LASTEXITCODE), continue scan anyway" | Tee-Object -FilePath $LogFile -Append
 }

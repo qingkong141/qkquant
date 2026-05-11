@@ -78,6 +78,18 @@ def update_data(
         "--source",
         help="数据源: akshare(最全但依赖 HTTPS) / baostock(走 TCP,代理友好) / auto(akshare 优先失败回退)",
     ),
+    jobs: int = typer.Option(
+        1,
+        "--jobs",
+        min=1,
+        help="并发抓取线程数；仅 source=akshare 时启用，baostock/auto 保持串行",
+    ),
+    recent_days: Optional[int] = typer.Option(
+        None,
+        "--recent-days",
+        min=1,
+        help="只更新最近 N 个自然日，用于每日增量任务；不影响 --full 的语义",
+    ),
 ) -> None:
     """拉取/增量更新日线到本地 DuckDB。"""
     if source not in ("akshare", "baostock", "auto"):
@@ -125,16 +137,23 @@ def update_data(
         logger.warning(f"instrument fetch failed (continue without ST filter): {e}")
 
     # 3. 拉日线
+    effective_since = since
+    if recent_days and not full:
+        until_d = pd.to_datetime(until).date()
+        recent_start = until_d - timedelta(days=recent_days - 1)
+        configured_start = pd.to_datetime(since).date()
+        effective_since = max(configured_start, recent_start).isoformat()
     console.print(
-        f"[bold]updating {len(target_codes)} codes[/bold] [{since} -> {until}] adjust={adjust} "
-        f"incremental={not full}"
+        f"[bold]updating {len(target_codes)} codes[/bold] [{effective_since} -> {until}] "
+        f"adjust={adjust} incremental={not full} jobs={jobs if source == 'akshare' else 1}"
     )
     summary = fetcher.bulk_update_daily(
         codes=target_codes,
-        start=since,
+        start=effective_since,
         end=until,
         adjust=adjust,
         incremental=not full,
+        jobs=jobs,
     )
     fetcher.close()
     stats = store.stats()
@@ -448,6 +467,11 @@ def scan_cmd(
         "--raw",
         help="裸信号模式：不跑回测，直接对每只股票算今日入场条件（忽略模拟仓和风控熔断）",
     ),
+    ai: bool = typer.Option(
+        False,
+        "--ai/--no-ai",
+        help="追加 AI 分析（仅解释裸信号，不改变策略结果）",
+    ),
     push: bool = typer.Option(
         False, "--push", help="把信号推送到 config/notify.yaml 配置的通道"
     ),
@@ -498,6 +522,27 @@ def scan_cmd(
     else:
         signals = scan_all(store, strat_list, target_codes, as_of=as_of_d)
         text = format_signals(signals, holdings, name_map=name_map)
+
+    if ai:
+        if raw:
+            from qkquant.ai import analyze_raw_signals, format_ai_section, load_ai_config
+
+            ai_cfg = load_ai_config(PROJECT_ROOT / "config" / "ai.yaml")
+            ai_response = analyze_raw_signals(
+                results,
+                holdings,
+                name_map=name_map,
+                as_of=as_of_d,
+                strategies=strat_list,
+                universe_size=len(target_codes),
+                config=ai_cfg,
+            )
+            text = f"{text}\n\n{format_ai_section(ai_response)}"
+        else:
+            text = (
+                f"{text}\n\n## AI 分析\n\n"
+                "AI 分析当前仅支持 `--raw` 裸信号模式；原始扫描结果不受影响。"
+            )
 
     if save:
         out_dir = PROJECT_ROOT / "reports"

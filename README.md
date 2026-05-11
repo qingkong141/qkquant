@@ -49,6 +49,9 @@ uv run qkquant update-data --universe hs300 --since 2022-01-01
 
 ```powershell
 uv run qkquant update-data --universe hs300
+
+# 每日任务推荐：只更新最近几天，并发走 akshare，避免 baostock 逐票慢查
+uv run qkquant update-data --universe hs300 --source akshare --jobs 8 --recent-days 10
 ```
 
 #### 数据源选择（代理环境必看）
@@ -66,6 +69,9 @@ uv run qkquant update-data --universe hs300 --since 2022-01-01 --source baostock
 ```
 
 baostock 约滞后 1-2 个交易日，首次拉全市场基本信息约 60-90 秒（5500+ 条逐条流式）。
+
+`--jobs` 只在 `--source akshare` 下启用并发；`auto` / `baostock` 会保持串行，避免 baostock 全局会话并发不稳定。
+`--recent-days N` 适合每日增量，只把本次请求窗口收窄到最近 N 个自然日。
 
 查看本地库摘要：
 
@@ -99,9 +105,16 @@ uv run qkquant scan --raw
 
 # 加 --push 推送到 config/notify.yaml 配置的微信/飞书/企微
 uv run qkquant scan --raw --push
+
+# 加 --ai 追加 AI 分析（只解读信号，不生成买卖信号）
+uv run qkquant scan --raw --ai
 ```
 
 输出到 `reports/scan_YYYY-MM-DD_raw.md`，区分"BUY 候选" vs "你的 watchlist 中触发出场"。
+
+AI 分析配置在 `config/ai.yaml`。默认 `provider: noop`，不联网也能生成规则化摘要；
+如需接 DeepSeek / OpenAI / 通义等 OpenAI-compatible API，配置 `provider` / `model` /
+`base_url`，并把密钥放到 `api_key_env` 指定的环境变量中，不要写进 yaml。
 
 定时调度（Windows 任务计划程序，每个交易日 15:30 自动跑）：
 
