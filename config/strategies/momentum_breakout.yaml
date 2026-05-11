@@ -1,0 +1,26 @@
+name: momentum_breakout
+description: 动量突破：mom>+5% & 距20日高<3% & 当日创10日新高才买；mom<-3% 或风控触发退出
+
+params:
+  mom_window: 20
+  entry_threshold: 0.05         # 比 momentum 严：+3% → +5%
+  exit_threshold: -0.03
+  drawdown_from_peak: 0.03      # 比 momentum 严：10% → 3%
+  breakout_window: 10           # 新增：必须当日创 10 日新高收盘
+  max_positions: 8              # 比 momentum 略少
+  min_price: 1.0
+
+risk:
+  trailing_stop:
+    enabled: true
+    threshold: 0.10             # 持仓期峰值回撤 10% 强平 (比 momentum 紧一点)
+  concentration:
+    enabled: true
+    max_weight: 0.15
+  portfolio_drawdown:
+    enabled: true
+    threshold: 0.20
+    cooldown_days: 20
+
+universe:
+  source: hs300

@@ -1,0 +1,35 @@
+name: grid_trading
+description: 网格交易（围绕基准价分档调仓，低位加仓，高位减仓）
+
+params:
+  grid_pct: 0.03              # 网格间距 3%
+  max_grid_levels: 5          # 上下最多各 5 格
+  base_window: 10             # 动态基准价均线窗口（grid_sweep 粗扫优选）
+  fixed_base_price: 0.0       # >0 使用固定基准价；0 表示动态基准价
+  base_position_pct: 0.50     # 基准价附近持有单票预算的 50%
+  position_step_pct: 0.10     # 每偏离 1 格，仓位变化 10%
+  min_position_pct: 0.00
+  max_position_pct: 1.00
+  max_positions: 10
+  min_price: 1.0
+  trend_window: 60
+  bear_position_cap: 0.10
+  min_trade_value: 2000
+  bull_position_boost: 0.20
+  rebalance_on_level_change_only: true
+
+risk:
+  trailing_stop:
+    enabled: true
+    threshold: 0.12
+  concentration:
+    enabled: true
+    max_weight: 0.15
+  portfolio_drawdown:
+    enabled: true
+    threshold: 0.20
+    cooldown_days: 20
+
+universe:
+  # 沪市 60xxxx + 深市 000/001/002（不含创业板 300、科创板 688）
+  source: main_board

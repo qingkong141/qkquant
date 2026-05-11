@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -c \"import pandas as pd; df = pd.read_csv\\('reports/ma_breakout_20260417_154852/trades.csv'\\); print\\('total rows:', len\\(df\\)\\); print\\(df.tail\\(8\\).to_string\\(\\)\\)\")",
+      "Bash(.venv/Scripts/qkquant.exe update-data *)",
+      "Bash(.venv/Scripts/qkquant.exe compare *)",
+      "Bash(.venv/Scripts/qkquant.exe scan *)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe)",
+      "Bash(.venv/Scripts/python.exe scripts/sensitivity_test.py)",
+      "Bash(.venv/Scripts/qkquant.exe list-strategies *)"
+    ]
+  }
+}

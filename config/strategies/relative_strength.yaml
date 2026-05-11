@@ -1,0 +1,24 @@
+name: relative_strength
+description: 相对强度选股（每 20 日调仓，持有过去 60 日涨幅 top 10）
+
+params:
+  lookback: 60          # 过去 60 日收益率作为信号
+  rebalance_days: 20    # 每 20 个交易日调仓一次
+  top_k: 10             # 持有 top 10
+  min_price: 1.0
+
+# 风控层（组合级 + 单票级）
+risk:
+  trailing_stop:
+    enabled: true
+    threshold: 0.12
+  concentration:
+    enabled: true
+    max_weight: 0.15
+  portfolio_drawdown:
+    enabled: true
+    threshold: 0.20
+    cooldown_days: 20
+
+universe:
+  source: hs300

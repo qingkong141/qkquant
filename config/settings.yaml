@@ -1,0 +1,24 @@
+# qkquant 全局配置
+data:
+  root: "./data"
+  duckdb_path: "./data/daily.duckdb"
+  fetcher:
+    adjust: "hfq"          # 后复权喂策略
+    retry_times: 3
+    retry_wait_seconds: 2
+    request_sleep_ms: 150   # 避免 akshare 限频
+
+backtest:
+  initial_capital: 100000
+  commission_rate: 0.00025      # 佣金万 2.5
+  commission_min: 5.0           # 最低 5 元
+  stamp_tax: 0.001              # 印花税千 1（卖出）
+  slippage_pct: 0.002           # 滑点 0.2%
+  limit_up_pct: 0.10            # 涨跌停限制 10%
+  report_root: "./reports"
+
+logging:
+  level: "INFO"
+  file: "./logs/qkquant.log"
+  rotation: "10 MB"
+  retention: "14 days"

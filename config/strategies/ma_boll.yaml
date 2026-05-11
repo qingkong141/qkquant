@@ -1,0 +1,15 @@
+name: ma_boll
+description: 双均线 + 布林带组合（金叉+趋势确认+不追高+中轨止损）
+
+params:
+  fast: 5
+  slow: 20
+  boll_period: 20
+  boll_dev: 2.0                # 行业标准 2σ
+  upper_buffer: 0.03           # 距上轨 3% 才进
+  mid_break_pct: 0.05          # 跌破中轨 5% 强出
+  max_positions: 10
+  min_price: 1.0
+
+universe:
+  source: hs300

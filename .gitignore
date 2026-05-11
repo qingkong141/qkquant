@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Virtualenv / uv
+.venv/
+venv/
+env/
+
+# Data and logs (keep large binaries out of git)
+data/
+logs/
+reports/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+
+# Notebooks
+notebooks/
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / personal config
+config/notify.yaml
+config/positions.yaml

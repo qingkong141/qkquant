@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe scripts/combo_test.py)",
+      "Bash(.venv/Scripts/qkquant.exe track *)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(Get-ChildItem -Path \"d:\\\\lsl\\\\qkquant\" -Depth 2)",
+      "Bash(Select-Object Mode, Name)",
+      "Bash(Format-List)"
+    ]
+  }
+}
