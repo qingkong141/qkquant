@@ -209,11 +209,17 @@ def _raw_ma_breakout(df: pd.DataFrame, params: dict) -> dict:
     slow = int(params.get("slow", 20))
     stop_loss_pct = float(params.get("stop_loss_pct", 0.05))
     min_price = float(params.get("min_price", 1.0))
+    trend_period = int(params.get("trend_period", 60))
+    trend_filter = bool(params.get("trend_filter", True))
+    vol_period = int(params.get("vol_period", 5))
+    volume_filter = bool(params.get("volume_filter", True))
 
-    if len(df) < slow + 1:
+    needed = max(slow, trend_period if trend_filter else 0) + 1
+    if len(df) < needed:
         return {"buy": False, "sell": False, "score": 0.0, "metrics": {}}
 
     closes = df["close"].to_numpy()
+    volumes = df["volume"].to_numpy() if volume_filter else None
     today_close = float(closes[-1])
     today_fast = float(closes[-fast:].mean())
     today_slow = float(closes[-slow:].mean())
@@ -224,6 +230,23 @@ def _raw_ma_breakout(df: pd.DataFrame, params: dict) -> dict:
     cross_down = (today_fast < today_slow) and (yest_fast >= yest_slow)
 
     buy = cross_up and today_close >= min_price
+    buy_reason = "ma_cross_up"
+
+    # 趋势过滤：价格必须站上 MA60
+    ma60 = float(closes[-trend_period:].mean()) if trend_filter else None
+    if buy and trend_filter and ma60 is not None:
+        if today_close <= ma60:
+            buy = False
+            buy_reason = None
+
+    # 量能过滤：当日量必须大于均量
+    vol_ma5 = float(volumes[-vol_period:].mean()) if volume_filter else None
+    today_vol = float(volumes[-1]) if volume_filter else None
+    if buy and volume_filter and vol_ma5 is not None and today_vol is not None:
+        if vol_ma5 > 0 and today_vol <= vol_ma5:
+            buy = False
+            buy_reason = None
+
     sell_stop = today_slow > 0 and today_close < today_slow * (1 - stop_loss_pct)
     sell = cross_down or sell_stop
 
@@ -232,18 +255,24 @@ def _raw_ma_breakout(df: pd.DataFrame, params: dict) -> dict:
     else:
         sell_reason = None
 
+    metrics = {
+        "close": today_close,
+        "fast_ma": today_fast,
+        "slow_ma": today_slow,
+        "fast_over_slow": today_fast / max(today_slow, 1e-6) - 1.0,
+    }
+    if ma60 is not None:
+        metrics["ma60"] = ma60
+    if vol_ma5 is not None and today_vol is not None:
+        metrics["vol_ratio"] = today_vol / max(vol_ma5, 1)
+
     return {
         "buy": buy,
         "sell": sell,
-        "buy_reason": "ma_cross_up" if buy else None,
+        "buy_reason": buy_reason if buy else None,
         "sell_reason": sell_reason,
         "score": today_fast / max(today_slow, 1e-6) - 1.0,
-        "metrics": {
-            "close": today_close,
-            "fast_ma": today_fast,
-            "slow_ma": today_slow,
-            "fast_over_slow": today_fast / max(today_slow, 1e-6) - 1.0,
-        },
+        "metrics": metrics,
     }
 
 
@@ -318,13 +347,19 @@ def _raw_momentum(df: pd.DataFrame, params: dict) -> dict:
     exit_threshold = float(params.get("exit_threshold", -0.03))
     drawdown_from_peak = float(params.get("drawdown_from_peak", 0.10))
     min_price = float(params.get("min_price", 1.0))
+    min_float_cap = float(params.get("min_float_cap", 2_000_000_000))
+    max_float_cap = float(params.get("max_float_cap", 0))
+    min_amount = float(params.get("min_amount", 5_000_000))
+    market_caps: dict[str, dict] = params.get("market_caps") or {}
 
     if len(df) < mom_window + 1:
         return {"buy": False, "sell": False, "score": 0.0, "metrics": {}}
 
     closes = df["close"].to_numpy()
     highs = df["high"].to_numpy()
+    volumes = df["volume"].to_numpy()
     today_close = float(closes[-1])
+    today_vol = float(volumes[-1])
     start_close = float(closes[-mom_window - 1])
     if start_close <= 0:
         return {"buy": False, "sell": False, "score": 0.0, "metrics": {}}
@@ -334,12 +369,32 @@ def _raw_momentum(df: pd.DataFrame, params: dict) -> dict:
 
     near_high = (win_high > 0) and (today_close >= win_high * (1 - drawdown_from_peak))
     buy = (today_close >= min_price) and (mom > entry_threshold) and near_high
+    buy_reason = "momentum_entry"
+
+    # 市值过滤
+    if buy and market_caps:
+        code = params.get("_code")  # 由调用方注入
+        if code:
+            mc = market_caps.get(code)
+            if mc is not None:
+                fc = mc.get("float_cap", 0) or 0
+                if min_float_cap > 0 and fc < min_float_cap:
+                    buy = False; buy_reason = None
+                if max_float_cap > 0 and fc > max_float_cap:
+                    buy = False; buy_reason = None
+
+    # 最小成交额
+    if buy and min_amount > 0:
+        amount = today_vol * today_close
+        if amount < min_amount:
+            buy = False; buy_reason = None
+
     sell = mom < exit_threshold
 
     return {
         "buy": buy,
         "sell": sell,
-        "buy_reason": "momentum_entry" if buy else None,
+        "buy_reason": buy_reason if buy else None,
         "sell_reason": "momentum_exit" if sell else None,
         "score": mom,
         "metrics": {
@@ -358,6 +413,10 @@ def _raw_momentum_breakout(df: pd.DataFrame, params: dict) -> dict:
     drawdown_from_peak = float(params.get("drawdown_from_peak", 0.03))
     breakout_window = int(params.get("breakout_window", 10))
     min_price = float(params.get("min_price", 1.0))
+    min_float_cap = float(params.get("min_float_cap", 2_000_000_000))
+    max_float_cap = float(params.get("max_float_cap", 0))
+    min_amount = float(params.get("min_amount", 5_000_000))
+    market_caps: dict[str, dict] = params.get("market_caps") or {}
 
     needed = max(mom_window, breakout_window) + 1
     if len(df) < needed:
@@ -365,7 +424,9 @@ def _raw_momentum_breakout(df: pd.DataFrame, params: dict) -> dict:
 
     closes = df["close"].to_numpy()
     highs = df["high"].to_numpy()
+    volumes = df["volume"].to_numpy()
     today_close = float(closes[-1])
+    today_vol = float(volumes[-1])
     if today_close < min_price:
         return {"buy": False, "sell": False, "score": 0.0, "metrics": {}}
 
@@ -387,12 +448,32 @@ def _raw_momentum_breakout(df: pd.DataFrame, params: dict) -> dict:
         and near_peak
         and is_breakout
     )
+    buy_reason = "breakout_entry"
+
+    # 市值过滤
+    if buy and market_caps:
+        code = params.get("_code")  # 由调用方注入
+        if code:
+            mc = market_caps.get(code)
+            if mc is not None:
+                fc = mc.get("float_cap", 0) or 0
+                if min_float_cap > 0 and fc < min_float_cap:
+                    buy = False; buy_reason = None
+                if max_float_cap > 0 and fc > max_float_cap:
+                    buy = False; buy_reason = None
+
+    # 最小成交额
+    if buy and min_amount > 0:
+        amount = today_vol * today_close
+        if amount < min_amount:
+            buy = False; buy_reason = None
+
     sell = mom < exit_threshold
 
     return {
         "buy": buy,
         "sell": sell,
-        "buy_reason": "breakout_entry" if buy else None,
+        "buy_reason": buy_reason if buy else None,
         "sell_reason": "momentum_exit" if sell else None,
         "score": mom,
         "metrics": {
@@ -472,10 +553,15 @@ def scan_raw(
 
     results: dict[str, dict] = {name: {"buys": [], "sells": []} for name in strategies}
 
+    # 加载市值数据（供策略过滤微盘股等）
+    market_caps = store.load_market_caps(codes)
+
     for name in strategies:
         info = get_strategy(name)
         cfg = load_strategy_config(info)
         params = (cfg.get("params") or {}) if cfg else {}
+        if market_caps:
+            params["market_caps"] = market_caps
 
         if name == "ma_boll":
             cap = int(params.get("max_positions", 10))
@@ -504,6 +590,7 @@ def scan_raw(
         elif name == "momentum":
             cap = int(params.get("max_positions", 10))
             for code, df in price_data.items():
+                params["_code"] = code
                 sig = _raw_momentum(df, params)
                 row = {"code": code, **sig}
                 if sig.get("buy"):
@@ -516,6 +603,7 @@ def scan_raw(
         elif name == "momentum_breakout":
             cap = int(params.get("max_positions", 8))
             for code, df in price_data.items():
+                params["_code"] = code
                 sig = _raw_momentum_breakout(df, params)
                 row = {"code": code, **sig}
                 if sig.get("buy"):

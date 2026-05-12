@@ -156,6 +156,18 @@ def update_data(
         jobs=jobs,
     )
     fetcher.close()
+    # 4. 更新市值
+    if len(target_codes) <= 500:
+        console.print("[dim]fetching market caps ...[/dim]")
+        try:
+            mc_fetcher = DataFetcher(store=store, source=source)
+            mc_df = mc_fetcher.fetch_market_caps(target_codes)
+            mc_fetcher.close()
+            if not mc_df.empty:
+                n_mc = store.upsert_market_caps(mc_df)
+                console.print(f"[dim]market caps updated: {n_mc} codes[/dim]")
+        except Exception as e:
+            logger.warning(f"market cap fetch failed (non-critical): {e}")
     stats = store.stats()
     store.close()
 

@@ -26,11 +26,16 @@ class MomentumBreakoutStrategy(BtStrategyBase):
         ("breakout_window", 10),           # 必须创 10日新高
         ("max_positions", 8),
         ("min_price", 1.0),
+        ("min_float_cap", 2_000_000_000),  # 盘口：最小流通市值 20 亿
+        ("max_float_cap", 0),              # 盘口：最大流通市值上限（0=不限）
+        ("min_amount", 5_000_000),         # 盘口：最小成交额 500 万
+        ("market_caps", None),             # 内部：由引擎注入
     )
 
     def __init__(self) -> None:
         super().__init__()
         self._trade_log: list[dict] = []
+        self._mc: dict[str, dict] = self.p.market_caps or {}
 
     def _window_return(self, data) -> float:
         w = self.p.mom_window
@@ -110,6 +115,24 @@ class MomentumBreakoutStrategy(BtStrategyBase):
             # 必须创 N 日新高
             if not self._is_close_breakout(data):
                 continue
+
+            # 盘口：市值过滤
+            if self._mc:
+                mc = self._mc.get(code)
+                if mc is not None:
+                    float_cap = mc.get("float_cap", 0) or 0
+                    if self.p.min_float_cap > 0 and float_cap < self.p.min_float_cap:
+                        continue
+                    if self.p.max_float_cap > 0 and float_cap > self.p.max_float_cap:
+                        continue
+
+            # 盘口：最小成交额
+            if self.p.min_amount > 0:
+                vol = float(data.volume[0])
+                amount = vol * close
+                if amount < self.p.min_amount:
+                    continue
+
             candidates.append((code, mom))
 
         candidates.sort(key=lambda x: -x[1])

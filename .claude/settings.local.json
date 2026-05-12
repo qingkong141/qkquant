@@ -6,7 +6,10 @@
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "Bash(Get-ChildItem -Path \"d:\\\\lsl\\\\qkquant\" -Depth 2)",
       "Bash(Select-Object Mode, Name)",
-      "Bash(Format-List)"
+      "Bash(Format-List)",
+      "Bash(.venv/Scripts/python.exe _analyze_002115.py)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli backtest ma_breakout --start 2024-01-01 --end 2026-05-11 --universe main_board --capital 100000 --limit 500)",
+      "WebSearch"
     ]
   }
 }

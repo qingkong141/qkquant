@@ -50,7 +50,10 @@ uv run qkquant update-data --universe hs300 --since 2022-01-01
 ```powershell
 uv run qkquant update-data --universe hs300
 
-# 每日任务推荐：只更新最近几天，并发走 akshare，避免 baostock 逐票慢查
+# 每日任务稳妥版：只更新最近几天，走 baostock 避开东财 HTTPS/代理问题
+uv run qkquant update-data --universe hs300 --source baostock --recent-days 10
+
+# 如果当前网络能稳定访问东方财富，可用 akshare 并发加速
 uv run qkquant update-data --universe hs300 --source akshare --jobs 8 --recent-days 10
 ```
 

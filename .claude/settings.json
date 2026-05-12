@@ -8,7 +8,16 @@
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "Bash(.venv/Scripts/python.exe)",
       "Bash(.venv/Scripts/python.exe scripts/sensitivity_test.py)",
-      "Bash(.venv/Scripts/qkquant.exe list-strategies *)"
+      "Bash(.venv/Scripts/qkquant.exe list-strategies *)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli update-data --universe custom --codes 002115 --source akshare --since 2026-05-06)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli update-data --universe custom --codes 002115 --source baostock --since 2026-05-06)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli backtest momentum --start 2024-01-01 --end 2026-05-11 --universe hs300 --capital 100000)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli backtest momentum_breakout --start 2024-01-01 --end 2026-05-11 --universe hs300 --capital 100000)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli backtest ma_boll --start 2024-01-01 --end 2026-05-11 --universe hs300 --capital 100000)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli backtest relative_strength --start 2024-01-01 --end 2026-05-11 --universe hs300 --capital 100000)",
+      "Bash(.venv/Scripts/python.exe -m qkquant.cli compare momentum momentum_breakout ma_boll relative_strength ma_breakout --start 2024-01-01 --end 2026-05-11 --universe main_board --capital 100000 --limit 500)",
+      "Bash(python -c \"from qkquant.strategy.momentum import MomentumStrategy; from qkquant.strategy.momentum_breakout import MomentumBreakoutStrategy; print\\('OK: both strategies import successfully'\\)\")",
+      "PowerShell(python -c \"import py_compile; py_compile.compile\\('d:/lsl/qkquant/src/qkquant/strategy/momentum.py', doraise=True\\); py_compile.compile\\('d:/lsl/qkquant/src/qkquant/strategy/momentum_breakout.py', doraise=True\\); py_compile.compile\\('d:/lsl/qkquant/src/qkquant/scan.py', doraise=True\\); print\\('syntax OK'\\)\")"
     ]
   }
 }

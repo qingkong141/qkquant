@@ -25,13 +25,17 @@ class MaBreakoutStrategy(BtStrategyBase):
         ("stop_loss_pct", 0.05),
         ("max_positions", 10),
         ("min_price", 1.0),       # 低于此价格跳过（防 1 分以下极端）
+        ("trend_period", 60),     # 趋势过滤：价格必须站上该 MA 才允许买入
+        ("trend_filter", True),   # 是否启用趋势过滤
+        ("vol_period", 5),        # 量能过滤：成交量 MA 周期
+        ("volume_filter", True),  # 是否启用放量过滤（买入需当日量 > 均量）
     )
 
     def __init__(self) -> None:
         super().__init__()
         self.inds: dict[str, dict] = {}
         for data in self.datas:
-            self.inds[data._name] = {
+            indicators: dict = {
                 "fast": bt.indicators.SMA(data.close, period=self.p.fast),
                 "slow": bt.indicators.SMA(data.close, period=self.p.slow),
                 "cross": bt.indicators.CrossOver(
@@ -39,6 +43,15 @@ class MaBreakoutStrategy(BtStrategyBase):
                     bt.indicators.SMA(data.close, period=self.p.slow),
                 ),
             }
+            if self.p.trend_filter:
+                indicators["trend_ma"] = bt.indicators.SMA(
+                    data.close, period=self.p.trend_period
+                )
+            if self.p.volume_filter:
+                indicators["vol_ma"] = bt.indicators.SMA(
+                    data.volume, period=self.p.vol_period
+                )
+            self.inds[data._name] = indicators
         self._trade_log: list[dict] = []
 
     # ---- 辅助 ----
@@ -112,6 +125,20 @@ class MaBreakoutStrategy(BtStrategyBase):
             cross = float(ind["cross"][0])
             close = float(data.close[0])
             if cross > 0 and close >= self.p.min_price:
+
+                # 趋势过滤：价格必须站上 MA60，排除熊市反弹中的假金叉
+                if self.p.trend_filter:
+                    trend_val = float(ind["trend_ma"][0])
+                    if close <= trend_val:
+                        continue
+
+                # 量能过滤：当日量必须大于均量，排除缩量金叉
+                if self.p.volume_filter:
+                    vol = float(data.volume[0])
+                    vol_ma = float(ind["vol_ma"][0])
+                    if vol_ma > 0 and vol <= vol_ma:
+                        continue
+
                 # 用 (fast - slow) 的相对强度作为排序键,优先买强势股
                 strength = float(ind["fast"][0]) / max(float(ind["slow"][0]), 1e-6) - 1
                 candidates.append((code, strength))

@@ -28,11 +28,16 @@ class MomentumStrategy(BtStrategyBase):
         ("drawdown_from_peak", 0.10),  # 从 20 日最高点的最大折价
         ("max_positions", 10),
         ("min_price", 1.0),
+        ("min_float_cap", 2_000_000_000),   # 盘口：最小流通市值 20 亿（过滤微盘庄股）
+        ("max_float_cap", 0),               # 盘口：最大流通市值上限（0=不限）
+        ("min_amount", 5_000_000),          # 盘口：最小成交额 500 万（过滤无流动性票）
+        ("market_caps", None),              # 内部：由引擎注入 {code: {total_cap, float_cap}}
     )
 
     def __init__(self) -> None:
         super().__init__()
         self._trade_log: list[dict] = []
+        self._mc: dict[str, dict] = self.p.market_caps or {}
 
     def _window_return(self, data) -> float:
         w = self.p.mom_window
@@ -100,6 +105,26 @@ class MomentumStrategy(BtStrategyBase):
             win_high = self._window_high(data)
             if win_high > 0 and close < win_high * (1 - self.p.drawdown_from_peak):
                 continue
+
+            # ---- 盘口限制 ----
+
+            # 1. 市值过滤：太小不碰（庄股/流动性差），太大不碰（盘子太重难拉）
+            if self._mc:
+                mc = self._mc.get(code)
+                if mc is not None:
+                    float_cap = mc.get("float_cap", 0) or 0
+                    if self.p.min_float_cap > 0 and float_cap < self.p.min_float_cap:
+                        continue
+                    if self.p.max_float_cap > 0 and float_cap > self.p.max_float_cap:
+                        continue
+
+            # 2. 最小成交额：流动性不足不参与
+            if self.p.min_amount > 0:
+                vol = float(data.volume[0])
+                amount = vol * close
+                if amount < self.p.min_amount:
+                    continue
+
             candidates.append((code, mom))
 
         candidates.sort(key=lambda x: x[1], reverse=True)

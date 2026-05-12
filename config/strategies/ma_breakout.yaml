@@ -5,6 +5,10 @@ params:
   fast: 5
   slow: 20
   stop_loss_pct: 0.05      # 跌破慢线 5% 止损
+  trend_period: 60          # 趋势过滤 MA 周期（价格必须站上才买）
+  trend_filter: true        # 启用趋势过滤
+  vol_period: 5             # 量能过滤 MA 周期
+  volume_filter: true       # 启用放量过滤（要求当日量 > 均量）
 
 # 风控层（组合级 + 单票级）
 risk:

@@ -240,7 +240,16 @@ class BacktestEngine:
         )
         cerebro.broker.addcommissioninfo(comm)
 
-        feeds = build_feeds(self.store, codes, start=start, end=end, adjust=adjust)
+        min_bars = max(
+            30,
+            self.strategy_params.get("slow", 20),
+            self.strategy_params.get("trend_period", 0),
+            self.strategy_params.get("boll_period", 0),
+            self.strategy_params.get("mom_window", 0),
+            self.strategy_params.get("lookback", 0),
+            self.strategy_params.get("breakout_window", 0),
+        ) + 1
+        feeds = build_feeds(self.store, codes, start=start, end=end, adjust=adjust, min_bars=min_bars)
         if not feeds:
             raise RuntimeError(
                 f"no feeds built for {len(codes)} codes in [{start}, {end}]; "
@@ -250,6 +259,11 @@ class BacktestEngine:
             cerebro.adddata(feed, name=code)
 
         strategy_kwargs = dict(self.strategy_params)
+        # 注入市值数据（策略若需要 min_float_cap/max_float_cap 则依赖此数据）
+        feed_codes = [c for c, _ in feeds]
+        market_caps = self.store.load_market_caps(feed_codes)
+        if market_caps:
+            strategy_kwargs["market_caps"] = market_caps
         if self.risk_config is not None and self.risk_config.any_enabled():
             strategy_kwargs["risk_manager"] = RiskManager(self.risk_config)
         cerebro.addstrategy(self.strategy_cls, **strategy_kwargs)
