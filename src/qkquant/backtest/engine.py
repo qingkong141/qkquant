@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from qkquant.backtest.datafeed import PandasDataExt, build_feeds
-from qkquant.config import get_settings
+from qkquant.config import PROJECT_ROOT, get_settings
 from qkquant.data.storage import DuckStore
 from qkquant.factors.indicators import adx as compute_adx
 from qkquant.logger import logger
@@ -61,6 +61,10 @@ class BtStrategyBase(bt.Strategy):
         ("cooldown_days", 0),        # 卖出后 N 天内不重新买入同一只票；0=关闭
         ("adx_market_filter", False), # True=仅在 HS300<MA60 时空头发力 ADX，多头时关闭
         ("hs300_trend", None),       # 内部：引擎注入 {date: is_above_ma60}
+        ("industry_map", None),      # 内部：引擎注入 {code: industry_name}
+        ("max_per_industry", 0),     # 同一行业最大持仓数；0=关闭行业分散
+        ("eps_map", None),           # 内部：引擎注入 {code: eps_ttm}
+        ("max_pe", 0),               # PE 上限（TTM），0=关闭；例如 50 表示 PE>50 不买
     )
 
     def __init__(self) -> None:
@@ -321,6 +325,23 @@ class BacktestEngine:
         strategy_param_names = set(getattr(self.strategy_cls.params, "_getkeys", lambda: [])())
         if market_caps and "market_caps" in strategy_param_names:
             strategy_kwargs["market_caps"] = market_caps
+        # EPS TTM（仅在 max_pe > 0 时需要）
+        if strategy_kwargs.get("max_pe", 0) > 0:
+            eps_map = self.store.load_latest_eps(feed_codes)
+            if eps_map:
+                strategy_kwargs["eps_map"] = eps_map
+
+        # 行业映射（仅在 max_per_industry > 0 时需要）
+        if strategy_kwargs.get("max_per_industry", 0) > 0:
+            import csv
+            industry_path = PROJECT_ROOT / "data" / "industries.csv"
+            if industry_path.exists():
+                ind_map: dict[str, str] = {}
+                with industry_path.open("r", encoding="utf-8-sig") as f:
+                    for row in csv.DictReader(f):
+                        ind_map[row["code"]] = row["industry"]
+                strategy_kwargs["industry_map"] = ind_map
+
         # HS300 趋势（仅在 adx_market_filter=True 时需要）
         if strategy_kwargs.get("adx_market_filter"):
             hs300_codes = self.store.load_index_constituents("000300")

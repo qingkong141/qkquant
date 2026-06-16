@@ -633,12 +633,40 @@ def scan_raw(
 
     results: dict[str, dict] = {name: {"buys": [], "sells": []} for name in strategies}
 
+    def _apply_industry_limit(buys: list, cap: int, max_per: int) -> list:
+        """行业分散：从已排序的 buys 中按行业上限选取前 cap 只。"""
+        if max_per <= 0 or not industry_map:
+            return buys[:cap]
+        ind_count: dict[str, int] = {}
+        out: list = []
+        for row in buys:
+            if len(out) >= cap:
+                break
+            ind = industry_map.get(row["code"], "")
+            if ind and ind_count.get(ind, 0) >= max_per:
+                continue
+            ind_count[ind] = ind_count.get(ind, 0) + 1
+            out.append(row)
+        return out
+
     # 加载市值数据（供策略过滤微盘股等）
     market_caps = store.load_market_caps(codes)
 
     # 加载冷却期状态
     cooldown_path = PROJECT_ROOT / "config" / "cooldown.yaml"
     cooldowns = _load_cooldowns(cooldown_path)
+
+    # 加载行业映射
+    industry_map: dict[str, str] = {}
+    ind_path = PROJECT_ROOT / "data" / "industries.csv"
+    if ind_path.exists():
+        import csv
+        with ind_path.open("r", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                industry_map[row["code"]] = row["industry"]
+
+    # EPS TTM（PE 估值过滤）
+    eps_map: dict[str, float] = store.load_latest_eps(list(price_data.keys()))
 
     # HS300 趋势：当 adx_market_filter=True 且大盘多头时，关闭 ADX
     hs300_above_ma60 = True  # 默认多头，不拦截
@@ -674,11 +702,19 @@ def scan_raw(
                     cd = strat_cd.get(code)
                     if cd and as_of <= cd:
                         continue  # 冷却期内
+                    # PE 估值过滤
+                    max_pe = int(params.get("max_pe", 0))
+                    if max_pe > 0:
+                        eps = eps_map.get(code, 0)
+                        close_price = sig.get("metrics", {}).get("close", 0)
+                        if eps > 0 and close_price > 0 and close_price / eps > max_pe:
+                            continue
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
             results[name]["buys"].sort(key=lambda x: -x["score"])
-            results[name]["buys"] = results[name]["buys"][:cap]
+            max_per_ind = int(params.get("max_per_industry", 0))
+            results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
 
         elif name == "ma_breakout":
             cap = int(params.get("max_positions", 10))
@@ -690,11 +726,19 @@ def scan_raw(
                     cd = strat_cd.get(code)
                     if cd and as_of <= cd:
                         continue  # 冷却期内
+                    # PE 估值过滤
+                    max_pe = int(params.get("max_pe", 0))
+                    if max_pe > 0:
+                        eps = eps_map.get(code, 0)
+                        close_price = sig.get("metrics", {}).get("close", 0)
+                        if eps > 0 and close_price > 0 and close_price / eps > max_pe:
+                            continue
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
             results[name]["buys"].sort(key=lambda x: -x["score"])
-            results[name]["buys"] = results[name]["buys"][:cap]
+            max_per_ind = int(params.get("max_per_industry", 0))
+            results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
 
         elif name == "momentum":
             cap = int(params.get("max_positions", 10))
@@ -707,11 +751,19 @@ def scan_raw(
                     cd = strat_cd.get(code)
                     if cd and as_of <= cd:
                         continue  # 冷却期内
+                    # PE 估值过滤
+                    max_pe = int(params.get("max_pe", 0))
+                    if max_pe > 0:
+                        eps = eps_map.get(code, 0)
+                        close_price = sig.get("metrics", {}).get("close", 0)
+                        if eps > 0 and close_price > 0 and close_price / eps > max_pe:
+                            continue
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
             results[name]["buys"].sort(key=lambda x: -x["score"])
-            results[name]["buys"] = results[name]["buys"][:cap]
+            max_per_ind = int(params.get("max_per_industry", 0))
+            results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
 
         elif name == "momentum_breakout":
             cap = int(params.get("max_positions", 8))
@@ -724,11 +776,19 @@ def scan_raw(
                     cd = strat_cd.get(code)
                     if cd and as_of <= cd:
                         continue  # 冷却期内
+                    # PE 估值过滤
+                    max_pe = int(params.get("max_pe", 0))
+                    if max_pe > 0:
+                        eps = eps_map.get(code, 0)
+                        close_price = sig.get("metrics", {}).get("close", 0)
+                        if eps > 0 and close_price > 0 and close_price / eps > max_pe:
+                            continue
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
             results[name]["buys"].sort(key=lambda x: -x["score"])
-            results[name]["buys"] = results[name]["buys"][:cap]
+            max_per_ind = int(params.get("max_per_industry", 0))
+            results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
 
         elif name == "relative_strength":
             sigs = _raw_relative_strength(price_data, params)
@@ -742,6 +802,8 @@ def scan_raw(
                     row["sell_reason"] = f"fell_out_of_top{top_k}"
                     results[name]["sells"].append(row)
             results[name]["buys"].sort(key=lambda x: -x["score"])
+            max_per_ind = int(params.get("max_per_industry", 0))
+            results[name]["buys"] = _apply_industry_limit(results[name]["buys"], top_k, max_per_ind)
 
         # 更新冷却期：卖出信号触发后，对应代码进入冷却
         cd_days = int(params.get("cooldown_days", 0))

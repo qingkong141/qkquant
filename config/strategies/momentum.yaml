@@ -11,6 +11,14 @@ params:
   adx_threshold: 20            # ADX 趋势强度过滤：<20 视为震荡市，禁止买入；0=关闭
   cooldown_days: 20            # 卖出后 N 天内不得重新买入同一只票；0=关闭
   adx_market_filter: true      # True=仅在 HS300<MA60 时启用 ADX，多头时不拦截
+  max_per_industry: 2           # 同一行业最大持仓数（行业中性化）；0=关闭
+  max_pe: 0                     # PE 上限（TTM），>N 倍不买；0=关闭（需历史 EPS）
+  take_profit_pct: 0.15         # 分批止盈：盈利超此比例卖一半；0=关闭
+  time_stop_days: 0             # 时间止损（回测负贡献，保持关闭）
+  atr_weight: false             # ATR 波动率仓位（回测负贡献，保持关闭）
+  vol_confirm: false            # 量价确认（回测负贡献，A股缩量上行常见）
+  vol_ratio_min: 0.8            # 当日量 > 20日均量×倍率
+  min_up_ratio: 0.0             # 连涨比率下限（回测负贡献）
   min_float_cap: 2000000000    # 盘口：最小流通市值 20 亿（过滤微盘庄股）
   max_float_cap: 0             # 盘口：最大流通市值上限（0=不限）
   min_amount: 5000000          # 盘口：最小成交额 500 万（过滤无流动性票）

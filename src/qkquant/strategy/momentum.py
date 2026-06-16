@@ -16,6 +16,7 @@ from __future__ import annotations
 import backtrader as bt  # noqa: F401  预留未来接 indicator 用
 
 from qkquant.backtest.engine import BtStrategyBase
+from qkquant.factors.indicators import atr
 
 
 class MomentumStrategy(BtStrategyBase):
@@ -32,12 +33,20 @@ class MomentumStrategy(BtStrategyBase):
         ("max_float_cap", 0),               # 盘口：最大流通市值上限（0=不限）
         ("min_amount", 5_000_000),          # 盘口：最小成交额 500 万（过滤无流动性票）
         ("market_caps", None),              # 内部：由引擎注入 {code: {total_cap, float_cap}}
+        ("take_profit_pct", 0.15),          # 分批止盈：盈利超此比例卖一半；0=关闭
+        ("time_stop_days", 60),             # 时间止损：持仓超此天数强制清仓；0=关闭
+        ("atr_weight", False),              # ATR 波动率倒数加权仓位；高波票少配
+        ("vol_confirm", True),              # 量价确认：放量突破才买入
+        ("vol_ratio_min", 0.8),             # 当日量必须 > 20日均量×此倍率
+        ("min_up_ratio", 0.50),             # 连涨比率：mom_window 内上涨天数占比下限
     )
 
     def __init__(self) -> None:
         super().__init__()
         self._trade_log: list[dict] = []
         self._mc: dict[str, dict] = self.p.market_caps or {}
+        self._entry_price: dict[str, float] = {}  # 每笔持仓的入场均价
+        self._held_since: dict[str, int] = {}     # 持仓至今的 bar 数
 
     def _window_return(self, data) -> float:
         w = self.p.mom_window
@@ -62,7 +71,18 @@ class MomentumStrategy(BtStrategyBase):
 
         today = self._today()
 
-        # 1. 策略自己的动量反转退出（信号层，不是风控层）
+        # ---- 更新持仓追踪 ----
+        for data in self.datas:
+            code = data._name
+            pos = self.getposition(data)
+            if pos.size <= 0:
+                self._held_since.pop(code, None)
+                self._entry_price.pop(code, None)
+                continue
+            self._held_since[code] = self._held_since.get(code, 0) + 1
+
+        # ---- 1. 出场逻辑 ----
+
         for data in self.datas:
             code = data._name
             pos = self.getposition(data)
@@ -70,20 +90,45 @@ class MomentumStrategy(BtStrategyBase):
                 continue
 
             close = float(data.close[0])
+            entry = self._entry_price.get(code, close)
+
+            # 1a. 分批止盈：盈利超 take_profit_pct → 卖一半
+            if self.p.take_profit_pct > 0 and entry > 0:
+                gain = close / entry - 1.0
+                if gain >= self.p.take_profit_pct and pos.size > 100:
+                    half = (pos.size // 200) * 100  # 取整百股
+                    if half > 0:
+                        order = self.safe_sell(data, half, reason="take_profit")
+                        if order is not None:
+                            self._trade_log.append({
+                                "date": today, "code": code, "side": "SELL",
+                                "price": close, "qty": half,
+                                "reason": f"take_profit:{gain:+.1%}",
+                            })
+
+            # 1b. 时间止损：持仓超 N 个交易日 → 全平
+            if self.p.time_stop_days > 0:
+                held_bars = self._held_since.get(code, 0)
+                if held_bars >= self.p.time_stop_days:
+                    order = self.safe_sell(data, pos.size, reason="time_stop")
+                    if order is not None:
+                        self._trade_log.append({
+                            "date": today, "code": code, "side": "SELL",
+                            "price": close, "qty": pos.size,
+                            "reason": f"time_stop:{held_bars}d",
+                        })
+                    continue  # 已清仓，跳过后续检查
+
+            # 1c. 动量反转退出
             mom = self._window_return(data)
             if mom < self.p.exit_threshold:
                 order = self.safe_sell(data, pos.size, reason="momentum_exit")
                 if order is not None:
-                    self._trade_log.append(
-                        {
-                            "date": today,
-                            "code": code,
-                            "side": "SELL",
-                            "price": close,
-                            "qty": pos.size,
-                            "reason": "momentum_exit",
-                        }
-                    )
+                    self._trade_log.append({
+                        "date": today, "code": code, "side": "SELL",
+                        "price": close, "qty": pos.size,
+                        "reason": "momentum_exit",
+                    })
 
         # 2. 再跑买入
         held = set(self._current_positions())
@@ -131,6 +176,35 @@ class MomentumStrategy(BtStrategyBase):
             # 冷却期过滤：卖出后 N 天内不重新买入
             if self._in_cooldown(code, today):
                 continue
+            # PE 估值过滤：太贵不买
+            max_pe = self.p.max_pe
+            if max_pe > 0:
+                eps_map: dict[str, float] = self.p.eps_map or {}
+                eps = eps_map.get(code, 0)
+                if eps > 0 and close / eps > max_pe:
+                    continue
+
+            # 量价确认：今日量必须 > 20日均量×vol_ratio_min（缩量突破不可靠）
+            if self.p.vol_confirm:
+                w = self.p.mom_window
+                if len(data.volume) > w:
+                    vols = [float(data.volume[-i]) for i in range(1, w + 1)]
+                    avg_vol = sum(vols) / len(vols)
+                    today_vol = float(data.volume[0])
+                    if avg_vol > 0 and today_vol / avg_vol < self.p.vol_ratio_min:
+                        continue
+
+            # 连涨比率：上涨天数/总天数 < min_up_ratio → 个别暴涨撑动量，不靠谱
+            min_ur = self.p.min_up_ratio
+            if min_ur > 0:
+                w = self.p.mom_window
+                if len(data.close) > w:
+                    up_days = sum(
+                        1 for i in range(1, w + 1)
+                        if float(data.close[-i]) > float(data.close[-i - 1])
+                    )
+                    if up_days / w < min_ur:
+                        continue
 
             candidates.append((code, mom))
 
@@ -138,16 +212,64 @@ class MomentumStrategy(BtStrategyBase):
         target_value = self.broker.getvalue() / self.p.max_positions
         data_by_code = {d._name: d for d in self.datas}
 
-        for code, _ in candidates[:slots]:
+        # 行业中性化：每个行业最多 max_per_industry 只
+        ind_map: dict[str, str] = self.p.industry_map or {}
+        max_per_ind = self.p.max_per_industry
+        ind_count: dict[str, int] = {}
+        selected: list[str] = []
+        for code, _ in candidates:
+            if len(selected) >= slots:
+                break
+            if max_per_ind > 0:
+                ind = ind_map.get(code, "")
+                if ind and ind_count.get(ind, 0) >= max_per_ind:
+                    continue
+                ind_count[ind] = ind_count.get(ind, 0) + 1
+            selected.append(code)
+
+        for code in selected:
             data = data_by_code[code]
             close = float(data.close[0])
             if close <= 0:
                 continue
-            qty = int((target_value / close) // 100) * 100
+
+            # 基础仓位：等权
+            base_qty = int((target_value / close) // 100) * 100
+            if base_qty <= 0:
+                continue
+
+            # ATR 波动率倒数加权：高波少配、低波多配
+            if self.p.atr_weight:
+                try:
+                    high_s = data.high.get(size=15)
+                    low_s = data.low.get(size=15)
+                    close_s = data.close.get(size=15)
+                    import pandas as pd
+                    atr_val = float(atr(
+                        pd.Series([float(x) for x in high_s]),
+                        pd.Series([float(x) for x in low_s]),
+                        pd.Series([float(x) for x in close_s]),
+                    ).iloc[-1])
+                except Exception:
+                    atr_val = 0
+                if atr_val > 0 and close > 0:
+                    atr_ratio = atr_val / close  # ATR 占价格百分比
+                    # 基准 ATR 比 3%，高于此 → 减仓，低于此 → 加仓
+                    base_ratio = 0.03
+                    weight = min(max(base_ratio / max(atr_ratio, 0.005), 0.5), 1.5)
+                    qty = int(base_qty * weight // 100) * 100
+                else:
+                    qty = base_qty
+            else:
+                qty = base_qty
+
             if qty <= 0:
                 continue
+
             order = self.safe_buy(data, qty, reason="momentum_entry")
             if order is not None:
+                self._entry_price[code] = close
+                self._held_since[code] = 0
                 self._trade_log.append(
                     {
                         "date": today,
