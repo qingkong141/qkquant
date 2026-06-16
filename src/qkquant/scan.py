@@ -23,7 +23,9 @@ import pandas as pd
 import yaml
 
 from qkquant.backtest.engine import BacktestEngine
+from qkquant.config import PROJECT_ROOT
 from qkquant.data.storage import DuckStore
+from qkquant.factors.indicators import adx as compute_adx
 from qkquant.logger import logger
 from qkquant.strategy.registry import (
     get_strategy,
@@ -201,6 +203,28 @@ def format_signals(
 # =====================================================================
 
 
+def _adx_ok(df: pd.DataFrame, params: dict) -> bool:
+    """ADX 趋势强度过滤：ADX 低于阈值则视为震荡市，禁止买入。
+
+    只影响 BUY，不影响 SELL（出场不该被趋势强度阻止）。
+    """
+    threshold = float(params.get("adx_threshold", 0))
+    if threshold <= 0:
+        return True
+    if len(df) < 15:
+        return True  # 数据不足，不拦截
+    try:
+        adx_df = compute_adx(df["high"], df["low"], df["close"])
+        if adx_df.empty:
+            return True
+        val = adx_df["adx"].iloc[-1]
+        if pd.isna(val):
+            return True
+        return val >= threshold
+    except Exception:
+        return True  # 计算失败不阻塞信号
+
+
 def _raw_ma_breakout(df: pd.DataFrame, params: dict) -> dict:
     """对单只股票算 ma_breakout 当前信号。"""
     fast = int(params.get("fast", 5))
@@ -263,6 +287,11 @@ def _raw_ma_breakout(df: pd.DataFrame, params: dict) -> dict:
         metrics["ma60"] = ma60
     if vol_ma5 is not None and today_vol is not None:
         metrics["vol_ratio"] = today_vol / max(vol_ma5, 1)
+
+    # ADX 趋势强度过滤：震荡市禁止买入
+    if buy and not _adx_ok(df, params):
+        buy = False
+        buy_reason = None
 
     return {
         "buy": buy,
@@ -335,6 +364,11 @@ def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
     score = today_fast / max(today_slow, 1e-6) - 1.0
     score -= max(band_position - 0.75, 0.0) * 0.05
 
+    # ADX 趋势强度过滤：震荡市禁止买入
+    if buy and not _adx_ok(df, params):
+        buy = False
+        buy_reason = None
+
     return {
         "buy": buy,
         "sell": sell,
@@ -400,6 +434,11 @@ def _raw_momentum(df: pd.DataFrame, params: dict) -> dict:
         amount = today_vol * today_close
         if amount < min_amount:
             buy = False; buy_reason = None
+
+    # ADX 趋势强度过滤：震荡市禁止买入
+    if buy and not _adx_ok(df, params):
+        buy = False
+        buy_reason = None
 
     sell = mom < exit_threshold
 
@@ -480,6 +519,11 @@ def _raw_momentum_breakout(df: pd.DataFrame, params: dict) -> dict:
         if amount < min_amount:
             buy = False; buy_reason = None
 
+    # ADX 趋势强度过滤：震荡市禁止买入
+    if buy and not _adx_ok(df, params):
+        buy = False
+        buy_reason = None
+
     sell = mom < exit_threshold
 
     return {
@@ -541,6 +585,30 @@ def _raw_relative_strength(
     return out
 
 
+def _load_cooldowns(path: Path) -> dict[str, dict[str, date]]:
+    """加载冷却期状态文件。格式: {strategy: {code: cooldown_until_date}}"""
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    out: dict[str, dict[str, date]] = {}
+    for sname, codes in (raw.get("cooldowns") or {}).items():
+        out[sname] = {}
+        for code, d in (codes or {}).items():
+            out[sname][code] = pd.to_datetime(d).date()
+    return out
+
+
+def _save_cooldowns(path: Path, state: dict[str, dict[str, date]]) -> None:
+    """持久化冷却期状态。"""
+    out: dict[str, dict[str, str]] = {}
+    for sname, codes in state.items():
+        out[sname] = {c: d.isoformat() for c, d in codes.items()}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump({"cooldowns": out}, f, allow_unicode=True, default_flow_style=False)
+
+
 def scan_raw(
     store: DuckStore,
     strategies: list[str],
@@ -555,7 +623,7 @@ def scan_raw(
         { strategy_name: { "buys": [...], "sells": [...] } }
     """
     start = as_of - timedelta(days=history_days * 2)
-    df_all = store.load_daily(codes=codes, start=start, end=as_of, adjust="hfq")
+    df_all = store.load_daily(codes=codes, start=start, end=as_of, adjust="qfq")
     if df_all.empty:
         raise RuntimeError(f"no daily data in [{start}, {as_of}]")
     price_data = {
@@ -568,6 +636,23 @@ def scan_raw(
     # 加载市值数据（供策略过滤微盘股等）
     market_caps = store.load_market_caps(codes)
 
+    # 加载冷却期状态
+    cooldown_path = PROJECT_ROOT / "config" / "cooldown.yaml"
+    cooldowns = _load_cooldowns(cooldown_path)
+
+    # HS300 趋势：当 adx_market_filter=True 且大盘多头时，关闭 ADX
+    hs300_above_ma60 = True  # 默认多头，不拦截
+    hs300_codes = store.load_index_constituents("000300")
+    if hs300_codes:
+        hs300_start = as_of - timedelta(days=history_days * 2)
+        hs300_df = store.load_daily(codes=hs300_codes, start=hs300_start, end=as_of, adjust="qfq")
+        if not hs300_df.empty:
+            daily = hs300_df.groupby("trade_date")["close"].mean()
+            if len(daily) >= 60:
+                ma60_val = float(daily.rolling(60, min_periods=1).mean().iloc[-1])
+                close_val = float(daily.iloc[-1])
+                hs300_above_ma60 = close_val > ma60_val
+
     for name in strategies:
         info = get_strategy(name)
         cfg = load_strategy_config(info)
@@ -575,12 +660,20 @@ def scan_raw(
         if market_caps:
             params["market_caps"] = market_caps
 
+        # 大盘多头时关闭 ADX（adx_market_filter=True 时生效）
+        if params.get("adx_market_filter") and hs300_above_ma60:
+            params["adx_threshold"] = 0
+
         if name == "ma_boll":
             cap = int(params.get("max_positions", 10))
+            strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
                 sig = _raw_ma_boll(df, params)
                 row = {"code": code, **sig}
                 if sig.get("buy"):
+                    cd = strat_cd.get(code)
+                    if cd and as_of <= cd:
+                        continue  # 冷却期内
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
@@ -589,10 +682,14 @@ def scan_raw(
 
         elif name == "ma_breakout":
             cap = int(params.get("max_positions", 10))
+            strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
                 sig = _raw_ma_breakout(df, params)
                 row = {"code": code, **sig}
                 if sig.get("buy"):
+                    cd = strat_cd.get(code)
+                    if cd and as_of <= cd:
+                        continue  # 冷却期内
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
@@ -601,11 +698,15 @@ def scan_raw(
 
         elif name == "momentum":
             cap = int(params.get("max_positions", 10))
+            strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
                 params["_code"] = code
                 sig = _raw_momentum(df, params)
                 row = {"code": code, **sig}
                 if sig.get("buy"):
+                    cd = strat_cd.get(code)
+                    if cd and as_of <= cd:
+                        continue  # 冷却期内
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
@@ -614,11 +715,15 @@ def scan_raw(
 
         elif name == "momentum_breakout":
             cap = int(params.get("max_positions", 8))
+            strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
                 params["_code"] = code
                 sig = _raw_momentum_breakout(df, params)
                 row = {"code": code, **sig}
                 if sig.get("buy"):
+                    cd = strat_cd.get(code)
+                    if cd and as_of <= cd:
+                        continue  # 冷却期内
                     results[name]["buys"].append(row)
                 if sig.get("sell") and code in holdings:
                     results[name]["sells"].append(row)
@@ -637,6 +742,16 @@ def scan_raw(
                     row["sell_reason"] = f"fell_out_of_top{top_k}"
                     results[name]["sells"].append(row)
             results[name]["buys"].sort(key=lambda x: -x["score"])
+
+        # 更新冷却期：卖出信号触发后，对应代码进入冷却
+        cd_days = int(params.get("cooldown_days", 0))
+        if cd_days > 0:
+            strat_cd = cooldowns.setdefault(name, {})
+            for sell_row in results[name]["sells"]:
+                strat_cd[sell_row["code"]] = as_of + timedelta(days=cd_days)
+
+    # 持久化冷却期状态
+    _save_cooldowns(cooldown_path, cooldowns)
 
     return results
 

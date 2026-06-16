@@ -24,7 +24,7 @@ def load_panel(
     codes: list[str] | None = None,
     start: date | str | None = None,
     end: date | str | None = None,
-    adjust: str = "hfq",
+    adjust: str = "qfq",
     fields: tuple[str, ...] = PANEL_FIELDS,
 ) -> Panel:
     """从 DuckDB 读取长表日线，转成 {field: DataFrame(date × code)} 的宽表 dict。

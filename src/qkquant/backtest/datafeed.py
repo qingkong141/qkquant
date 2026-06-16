@@ -36,7 +36,7 @@ def build_feeds(
     codes: list[str],
     start: date | str,
     end: date | str,
-    adjust: str = "hfq",
+    adjust: str = "qfq",
     min_bars: int = 30,
 ) -> list[tuple[str, PandasDataExt]]:
     """为每只股票构造一个 bt feed；数据过少的股票会被跳过。"""

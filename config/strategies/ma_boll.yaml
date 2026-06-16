@@ -10,6 +10,9 @@ params:
   mid_break_pct: 0.05          # 跌破中轨 5% 强出
   max_positions: 5             # 3 万本金下每只约 6000 元，避免过度分散导致买不成一手
   min_price: 1.0
+  adx_threshold: 20            # ADX 趋势强度过滤：<20 视为震荡市，禁止买入；0=关闭
+  cooldown_days: 20            # 卖出后 N 天内不得重新买入同一只票；0=关闭
+  adx_market_filter: true      # True=仅在 HS300<MA60 时启用 ADX，多头时不拦截
   cross_lookback: 2            # 金叉后 2 天内仍允许入场
 
 universe:

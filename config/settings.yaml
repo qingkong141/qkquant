@@ -3,7 +3,7 @@ data:
   root: "./data"
   duckdb_path: "./data/daily.duckdb"
   fetcher:
-    adjust: "hfq"          # 后复权喂策略
+    adjust: "qfq"          # 前复权喂策略（当前价=实际市价，同花顺可比）
     retry_times: 3
     retry_wait_seconds: 2
     request_sleep_ms: 150   # 避免 akshare 限频

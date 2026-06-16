@@ -125,6 +125,13 @@ class MomentumStrategy(BtStrategyBase):
                 if amount < self.p.min_amount:
                     continue
 
+            # ADX 趋势强度过滤：震荡市不买入
+            if self.p.adx_threshold > 0 and not self._adx_ok(data):
+                continue
+            # 冷却期过滤：卖出后 N 天内不重新买入
+            if self._in_cooldown(code, today):
+                continue
+
             candidates.append((code, mom))
 
         candidates.sort(key=lambda x: x[1], reverse=True)

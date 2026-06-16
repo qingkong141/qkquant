@@ -9,14 +9,17 @@ A 股特殊规则在这一层实现，策略代码只关心信号逻辑：
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import backtrader as bt
+import numpy as np
+import pandas as pd
 
 from qkquant.backtest.datafeed import PandasDataExt, build_feeds
 from qkquant.config import get_settings
 from qkquant.data.storage import DuckStore
+from qkquant.factors.indicators import adx as compute_adx
 from qkquant.logger import logger
 from qkquant.risk import RiskConfig, RiskManager
 
@@ -54,10 +57,15 @@ class BtStrategyBase(bt.Strategy):
 
     params = (
         ("risk_manager", None),
+        ("adx_threshold", 0),        # ADX 趋势强度过滤：<N 不买入；0=关闭
+        ("cooldown_days", 0),        # 卖出后 N 天内不重新买入同一只票；0=关闭
+        ("adx_market_filter", False), # True=仅在 HS300<MA60 时空头发力 ADX，多头时关闭
+        ("hs300_trend", None),       # 内部：引擎注入 {date: is_above_ma60}
     )
 
     def __init__(self) -> None:
         self._buy_dates: dict[str, date] = {}       # code -> 最近一次买入成交日期
+        self._sell_dates: dict[str, date] = {}      # code -> 最近一次卖出成交日期（冷却期用）
         self._order_reasons: dict[int, str] = {}    # order.ref -> reason
         self._rejections: list[dict] = []           # 被规则拦截的订单
         self.risk: RiskManager | None = self.p.risk_manager
@@ -93,6 +101,51 @@ class BtStrategyBase(bt.Strategy):
 
     def _can_buy(self, data: PandasDataExt) -> bool:
         return not self._is_limit_up(data)
+
+    # -------- ADX 趋势强度过滤 --------
+
+    def _adx_ok(self, data: PandasDataExt) -> bool:
+        """ADX >= adx_threshold 才允许买入；阈值 ≤0 表示关闭过滤。
+
+        若 adx_market_filter=True：仅在 HS300 空头排列（<MA60）时才启用 ADX 过滤，
+        多头时跳过（趋势市中动量策略不需要 ADX 保护）。
+        """
+        threshold = self.p.adx_threshold
+        if threshold <= 0:
+            return True
+        # 市场多头时关闭 ADX 过滤
+        if self.p.adx_market_filter:
+            trend = self.p.hs300_trend or {}
+            today = self._today()
+            if trend.get(today, True):  # 默认 True=多头，不拦截
+                return True
+        lookback = 42
+        if len(data) < lookback:
+            return True
+        try:
+            closes = pd.Series([float(data.close[-i]) for i in range(lookback - 1, -1, -1)])
+            highs = pd.Series([float(data.high[-i]) for i in range(lookback - 1, -1, -1)])
+            lows = pd.Series([float(data.low[-i]) for i in range(lookback - 1, -1, -1)])
+            adx_df = compute_adx(highs, lows, closes)
+            if adx_df.empty:
+                return True
+            val = adx_df["adx"].iloc[-1]
+            if pd.isna(val):
+                return True
+            return float(val) >= threshold
+        except Exception:
+            return True  # 计算失败不阻塞
+
+    # -------- 冷却期过滤 --------
+
+    def _in_cooldown(self, code: str, today: date) -> bool:
+        """卖出后 cooldown_days 天内禁止重新买入。"""
+        if self.p.cooldown_days <= 0:
+            return False
+        last_sell = self._sell_dates.get(code)
+        if last_sell is None:
+            return False
+        return today <= last_sell + timedelta(days=self.p.cooldown_days)
 
     # -------- 安全下单 --------
 
@@ -185,8 +238,11 @@ class BtStrategyBase(bt.Strategy):
     def notify_order(self, order: bt.Order) -> None:
         if order.status in (order.Completed,):
             code = order.data._name
+            today = self._today()
             if order.isbuy():
-                self._buy_dates[code] = self._today()
+                self._buy_dates[code] = today
+            else:
+                self._sell_dates[code] = today
             if self.risk is not None:
                 self.risk.on_order_filled(self, order)
             logger.debug(
@@ -225,7 +281,7 @@ class BacktestEngine:
         codes: list[str],
         start: date | str,
         end: date | str,
-        adjust: str = "hfq",
+        adjust: str = "qfq",
     ) -> dict:
         cerebro = bt.Cerebro(stdstats=False)
         cerebro.broker.setcash(self.initial_capital)
@@ -265,6 +321,19 @@ class BacktestEngine:
         strategy_param_names = set(getattr(self.strategy_cls.params, "_getkeys", lambda: [])())
         if market_caps and "market_caps" in strategy_param_names:
             strategy_kwargs["market_caps"] = market_caps
+        # HS300 趋势（仅在 adx_market_filter=True 时需要）
+        if strategy_kwargs.get("adx_market_filter"):
+            hs300_codes = self.store.load_index_constituents("000300")
+            if hs300_codes:
+                hs300_df = self.store.load_daily(
+                    codes=hs300_codes, start=start, end=end, adjust=adjust
+                )
+                if not hs300_df.empty:
+                    daily_close = hs300_df.groupby("trade_date")["close"].mean()
+                    ma60 = daily_close.rolling(60, min_periods=1).mean()
+                    strategy_kwargs["hs300_trend"] = (
+                        (daily_close > ma60).to_dict()
+                    )
         if self.risk_config is not None and self.risk_config.any_enabled():
             strategy_kwargs["risk_manager"] = RiskManager(self.risk_config)
         cerebro.addstrategy(self.strategy_cls, **strategy_kwargs)

@@ -62,6 +62,66 @@ def atr(
     return tr.ewm(alpha=1.0 / window, adjust=False, min_periods=window).mean()
 
 
+def adx(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    window: int = 14,
+) -> pd.DataFrame:
+    """Average Directional Index —— 趋势强度指标。
+
+    ADX > 25 通常认为是趋势市，< 20 是震荡市。
+
+    Returns DataFrame with columns: adx, plus_di, minus_di
+    """
+    prev_close = close.shift(1)
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+
+    # 真实波幅 TR
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    # 方向运动 DM
+    up_move = high - prev_high
+    down_move = prev_low - low
+
+    plus_dm = pd.Series(0.0, index=high.index)
+    minus_dm = pd.Series(0.0, index=high.index)
+
+    mask_plus = (up_move > down_move) & (up_move > 0)
+    mask_minus = (down_move > up_move) & (down_move > 0)
+    plus_dm[mask_plus] = up_move[mask_plus]
+    minus_dm[mask_minus] = down_move[mask_minus]
+
+    # Wilder 平滑 (EMA, alpha=1/window)
+    atr_smooth = tr.ewm(alpha=1.0 / window, adjust=False, min_periods=window).mean()
+    plus_dm_smooth = plus_dm.ewm(alpha=1.0 / window, adjust=False, min_periods=window).mean()
+    minus_dm_smooth = minus_dm.ewm(alpha=1.0 / window, adjust=False, min_periods=window).mean()
+
+    # 方向指标 DI
+    plus_di = 100.0 * plus_dm_smooth / atr_smooth.replace(0, np.nan)
+    minus_di = 100.0 * minus_dm_smooth / atr_smooth.replace(0, np.nan)
+
+    # 方向运动指数 DX
+    di_sum = plus_di + minus_di
+    dx = 100.0 * (plus_di - minus_di).abs() / di_sum.replace(0, np.nan)
+
+    # ADX = DX 的 Wilder 平滑
+    adx_line = dx.ewm(alpha=1.0 / window, adjust=False, min_periods=window).mean()
+
+    return pd.DataFrame(
+        {"adx": adx_line, "plus_di": plus_di, "minus_di": minus_di},
+        index=high.index,
+    )
+
+
 def add_common_indicators(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -79,4 +139,4 @@ def add_common_indicators(
     return out
 
 
-__all__ = ["sma", "ema", "macd", "rsi", "atr", "add_common_indicators"]
+__all__ = ["adx", "sma", "ema", "macd", "rsi", "atr", "add_common_indicators"]

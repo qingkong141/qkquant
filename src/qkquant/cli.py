@@ -68,7 +68,7 @@ def update_data(
     codes: Optional[str] = typer.Option(
         None, "--codes", help="逗号分隔的自定义代码列表（universe=custom 时用）"
     ),
-    adjust: str = typer.Option("hfq", "--adjust", help="复权方式 hfq/qfq/''"),
+    adjust: str = typer.Option("qfq", "--adjust", help="复权方式 hfq/qfq/''"),
     full: bool = typer.Option(False, "--full", help="全量重拉（默认增量）"),
     limit: Optional[int] = typer.Option(
         None, "--limit", help="只拉前 N 只，用于快速测试"

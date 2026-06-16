@@ -9,6 +9,9 @@ params:
   trend_filter: true        # 启用趋势过滤
   vol_period: 5             # 量能过滤 MA 周期
   volume_filter: true       # 启用放量过滤（要求当日量 > 均量）
+  adx_threshold: 20            # ADX 趋势强度过滤：<20 视为震荡市，禁止买入；0=关闭
+  cooldown_days: 20            # 卖出后 N 天内不得重新买入同一只票；0=关闭
+  adx_market_filter: true      # True=仅在 HS300<MA60 时启用 ADX，多头时不拦截
 
 # 风控层（组合级 + 单票级）
 risk:

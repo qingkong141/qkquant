@@ -11,12 +11,15 @@ from typing import Optional
 
 import pandas as pd
 
+from qkquant.config import get_settings
 from qkquant.data.storage import DuckStore
 
 
 def _compute_hs300_ew_return(
-    store: DuckStore, start: date, end: date, adjust: str = "hfq"
+    store: DuckStore, start: date, end: date, adjust: str | None = None,
 ) -> float:
+    if adjust is None:
+        adjust = get_settings().data.fetcher.adjust
     """HS300 等权累计收益（从 start 到 end）。
 
     用 HS300 成分股的简单平均代表"市场基准"。不严格等同于 HS300 指数（市值加权），
@@ -71,7 +74,7 @@ def track_holdings(
             continue
         bought_at = pd.to_datetime(bought_at_raw).date()
 
-        df = store.load_daily(codes=[code], start=bought_at, end=as_of, adjust="hfq")
+        df = store.load_daily(codes=[code], start=bought_at, end=as_of, adjust=get_settings().data.fetcher.adjust)
         if df.empty:
             continue
         current = float(df.sort_values("trade_date").iloc[-1]["close"])

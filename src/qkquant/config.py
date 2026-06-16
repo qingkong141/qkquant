@@ -13,7 +13,7 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
 
 
 class FetcherSettings(BaseModel):
-    adjust: str = "hfq"
+    adjust: str = "qfq"
     retry_times: int = 3
     retry_wait_seconds: int = 2
     request_sleep_ms: int = 150
