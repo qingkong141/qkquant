@@ -19,7 +19,7 @@ A 股量化交易 MVP。从**回测研究**走到**半自动信号推送**，不
 - [x] 因子库（`factors/`）：mom_20d/60d/120d, reversal_5d, vol_20d, rsi_14, turnover, amihud + IC 测试 / 分组回测
 - [x] **每日信号扫描（`scan` 命令）**：2 策略对每只票算今日入场/出场信号，支持 watchlist 持仓追踪
 - [x] **推送通道（`notify.py`）**：ServerChan / 企微机器人 / 飞书机器人，自动推到私人微信
-- [x] **Daily 调度脚本**（`scripts/daily_scan.ps1`）：Windows 任务计划程序定时跑
+- [x] **Daily 调度脚本**（`scripts/daily_scan.ps1`）：Windows 任务计划程序定时跑（内置 `update-data --source auto`，避免仅用 baostock 时日线晚 1～2 日导致推送标题仍是「昨日数据日」）
 - [x] 绩效报告：净值曲线图、回撤图、summary.md、trades.csv、横向对比报告
 - [x] CLI：`update-data` / `backtest` / `compare` / `scan` / `factor-test` / `list-strategies` / `stats`
 - [x] 下单通道抽象接口 `BrokerBase`（暂无实现，预留给未来 easytrader / miniQMT）

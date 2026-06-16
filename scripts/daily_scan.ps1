@@ -2,7 +2,8 @@
 #
 # 流程：
 #   1) 切到项目根目录
-#   2) 增量更新 HS300 日线（baostock 更稳，akshare/东财接口易受网络影响）
+#   2) 增量更新 HS300 日线（默认 auto：优先 akshare，失败再 baostock）
+#      勿固定只用 baostock：其日线常滞后 1～2 个交易日，会出现「14 号推送标题仍是 13 号」
 #   3) 跑 scan --raw 并推送到已启用通道
 # 日志：logs/daily_scan_YYYYMMDD.log
 #
@@ -28,8 +29,8 @@ if (-not (Test-Path $Qkquant)) {
 "[$(Get-Date)] === daily_scan start ===" | Tee-Object -FilePath $LogFile -Append
 
 # 1) 增量拉今日数据
-"[$(Get-Date)] step 1: update-data --source baostock --recent-days 10 ..." | Tee-Object -FilePath $LogFile -Append
-& $Qkquant update-data --universe hs300 --source baostock --recent-days 10 *>> $LogFile
+"[$(Get-Date)] step 1: update-data --source auto --recent-days 10 ..." | Tee-Object -FilePath $LogFile -Append
+& $Qkquant update-data --universe hs300 --source auto --recent-days 10 *>> $LogFile
 if ($LASTEXITCODE -ne 0) {
     "[$(Get-Date)] update-data failed (exit $LASTEXITCODE), continue scan anyway" | Tee-Object -FilePath $LogFile -Append
 }

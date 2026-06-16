@@ -574,7 +574,15 @@ def scan_cmd(
                 f"[yellow]no notifier enabled in {notify_path}; skip push[/yellow]"
             )
         else:
-            title = f"qkquant 信号 {as_of_d} ({mode_label})"
+            run_d = date.today()
+            if as_of_d < run_d:
+                title = f"qkquant 信号 数据至{as_of_d}（推送{run_d}）{mode_label}"
+                console.print(
+                    f"[dim]push title 含双日期：K 线最新为 {as_of_d}；"
+                    "若需对齐日历日请先 `update-data`（baostock 源常晚 1～2 日）[/dim]"
+                )
+            else:
+                title = f"qkquant 信号 {as_of_d} ({mode_label})"
             n_ok = push_all(notifiers, title, text)
             console.print(
                 f"[green]pushed to {n_ok}/{len(notifiers)} channel(s)[/green]"
@@ -659,7 +667,11 @@ def track_cmd(
                 f"[yellow]no notifier enabled in {notify_path}; skip push[/yellow]"
             )
         else:
-            title = f"qkquant Watchlist {as_of_d}"
+            run_d = date.today()
+            if as_of_d < run_d:
+                title = f"qkquant Watchlist 数据至{as_of_d}（推送{run_d}）"
+            else:
+                title = f"qkquant Watchlist {as_of_d}"
             n_ok = push_all(notifiers, title, text)
             console.print(
                 f"[green]pushed to {n_ok}/{len(notifiers)} channel(s)[/green]"
