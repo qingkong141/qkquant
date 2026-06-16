@@ -259,10 +259,11 @@ class BacktestEngine:
             cerebro.adddata(feed, name=code)
 
         strategy_kwargs = dict(self.strategy_params)
-        # 注入市值数据（策略若需要 min_float_cap/max_float_cap 则依赖此数据）
+        # 注入市值数据（仅策略声明 market_caps 参数时传入）
         feed_codes = [c for c, _ in feeds]
         market_caps = self.store.load_market_caps(feed_codes)
-        if market_caps:
+        strategy_param_names = set(getattr(self.strategy_cls.params, "_getkeys", lambda: [])())
+        if market_caps and "market_caps" in strategy_param_names:
             strategy_kwargs["market_caps"] = market_caps
         if self.risk_config is not None and self.risk_config.any_enabled():
             strategy_kwargs["risk_manager"] = RiskManager(self.risk_config)

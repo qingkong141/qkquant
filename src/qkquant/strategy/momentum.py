@@ -26,7 +26,7 @@ class MomentumStrategy(BtStrategyBase):
         ("entry_threshold", 0.03),     # 过去 20 日 +3% 才考虑买
         ("exit_threshold", -0.03),     # 过去 20 日 -3% 触发卖
         ("drawdown_from_peak", 0.10),  # 从 20 日最高点的最大折价
-        ("max_positions", 10),
+        ("max_positions", 5),
         ("min_price", 1.0),
         ("min_float_cap", 2_000_000_000),   # 盘口：最小流通市值 20 亿（过滤微盘庄股）
         ("max_float_cap", 0),               # 盘口：最大流通市值上限（0=不限）

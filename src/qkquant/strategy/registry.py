@@ -12,11 +12,7 @@ from qkquant.backtest.engine import BtStrategyBase
 from qkquant.config import PROJECT_ROOT
 from qkquant.risk import RiskConfig
 from qkquant.strategy.ma_boll import MaBollStrategy
-from qkquant.strategy.ma_breakout import MaBreakoutStrategy
-from qkquant.strategy.grid_trading import GridTradingStrategy
 from qkquant.strategy.momentum import MomentumStrategy
-from qkquant.strategy.momentum_breakout import MomentumBreakoutStrategy
-from qkquant.strategy.relative_strength import RelativeStrengthStrategy
 
 
 @dataclass
@@ -29,42 +25,20 @@ class StrategyInfo:
 
 _STRAT_DIR = PROJECT_ROOT / "config" / "strategies"
 
+# 生产入口只保留这两个策略。旧策略源码和配置作为历史实验保留，
+# 但不再注册到 CLI / scan 的可用策略列表中。
 _REGISTRY: dict[str, StrategyInfo] = {
-    "ma_breakout": StrategyInfo(
-        name="ma_breakout",
-        cls=MaBreakoutStrategy,
-        description="双均线突破（5/20），等权持仓最多 10 只",
-        config_path=_STRAT_DIR / "ma_breakout.yaml",
-    ),
-    "ma_boll": StrategyInfo(
-        name="ma_boll",
-        cls=MaBollStrategy,
-        description="双均线 + 布林带（金叉+趋势确认+不追高+中轨止损）",
-        config_path=_STRAT_DIR / "ma_boll.yaml",
-    ),
-    "relative_strength": StrategyInfo(
-        name="relative_strength",
-        cls=RelativeStrengthStrategy,
-        description="横截面相对强度选股（每 20 日调仓，持有过去 60 日涨幅 top 10）",
-        config_path=_STRAT_DIR / "relative_strength.yaml",
-    ),
     "momentum": StrategyInfo(
         name="momentum",
         cls=MomentumStrategy,
         description="绝对动量 + 追踪止损（每日扫描，上限 10 只）",
         config_path=_STRAT_DIR / "momentum.yaml",
     ),
-    "momentum_breakout": StrategyInfo(
-        name="momentum_breakout",
-        cls=MomentumBreakoutStrategy,
-        description="动量突破（强化追高: 紧贴峰值+创新高+强动量；上限 8 只）",
-        config_path=_STRAT_DIR / "momentum_breakout.yaml",
-    ),
-    "grid_trading": StrategyInfo(
-        name="grid_trading",
-        cls=GridTradingStrategy,
-        description="网格交易（围绕基准价分档调仓：低位加仓、高位减仓）",
-        config_path=_STRAT_DIR / "grid_trading.yaml",
+    "ma_boll": StrategyInfo(
+        name="ma_boll",
+        cls=MaBollStrategy,
+        description="双均线 + 布林带（金叉+趋势确认+不追高+中轨止损）",
+        config_path=_STRAT_DIR / "ma_boll.yaml",
     ),
 }
 

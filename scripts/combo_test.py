@@ -36,7 +36,7 @@ def run_strategy(
     codes: list[str],
     start: str,
     end: str,
-    capital: float = 100_000.0,
+    capital: float = 30_000.0,
 ) -> pd.Series:
     """跑一个策略, 返回日收益 Series。"""
     info = get_strategy(name)

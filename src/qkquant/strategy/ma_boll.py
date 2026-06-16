@@ -7,7 +7,7 @@
 - 出场用 BOLL 中轨做止损，比固定百分比更适应波动率
 
 入场（同时满足）：
-- MA(fast) 上穿 MA(slow) 金叉
+- 最近 cross_lookback 天内 MA(fast) 上穿 MA(slow)，且当前 fast > slow
 - close > BOLL 中轨（趋势完好）
 - close ≤ BOLL 上轨 × (1 - upper_buffer)（未触及上轨）
 - close ≥ min_price
@@ -32,8 +32,9 @@ class MaBollStrategy(BtStrategyBase):
         ("boll_dev", 2.0),
         ("upper_buffer", 0.03),       # 距上轨需有 3% 缓冲
         ("mid_break_pct", 0.05),      # 跌破中轨 5% 强出
-        ("max_positions", 10),
+        ("max_positions", 5),
         ("min_price", 1.0),
+        ("cross_lookback", 2),        # 金叉后 2 天内仍允许入场，适配小资金错过当天信号的问题
     )
 
     def __init__(self) -> None:
@@ -58,6 +59,11 @@ class MaBollStrategy(BtStrategyBase):
 
     def _target_position_value(self) -> float:
         return self.broker.getvalue() / self.p.max_positions
+
+    def _recent_cross_up(self, cross) -> bool:
+        lookback = max(1, int(self.p.cross_lookback))
+        available = min(lookback, len(cross))
+        return any(float(cross[-i]) > 0 for i in range(available))
 
     def next(self) -> None:
         self.apply_forced_exits()
@@ -110,9 +116,12 @@ class MaBollStrategy(BtStrategyBase):
             ind = self.inds[code]
             if len(ind["cross"]) == 0 or len(ind["boll"].mid) == 0:
                 continue
-            cross = float(ind["cross"][0])
             close = float(data.close[0])
-            if cross <= 0 or close < self.p.min_price:
+            fast = float(ind["fast"][0])
+            slow = float(ind["slow"][0])
+            if close < self.p.min_price or fast <= slow:
+                continue
+            if not self._recent_cross_up(ind["cross"]):
                 continue
 
             mid = float(ind["boll"].mid[0])
@@ -134,7 +143,10 @@ class MaBollStrategy(BtStrategyBase):
                 )
                 continue
 
-            strength = float(ind["fast"][0]) / max(float(ind["slow"][0]), 1e-6) - 1
+            band_pos = (close - mid) / max(upper - mid, 1e-6)
+            strength = fast / max(slow, 1e-6) - 1
+            # 已确认趋势但不过度贴近上轨，减少追高后的回撤。
+            strength -= max(band_pos - 0.75, 0.0) * 0.05
             candidates.append((code, strength))
 
         candidates.sort(key=lambda x: x[1], reverse=True)

@@ -35,7 +35,7 @@ def run_one(
     start: str,
     end: str,
     params_override: dict | None = None,
-    capital: float = 100_000.0,
+    capital: float = 30_000.0,
 ) -> dict:
     info = get_strategy(strategy_name)
     cfg = load_strategy_config(info)

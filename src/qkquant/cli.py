@@ -181,10 +181,10 @@ def update_data(
 
 @app.command("backtest")
 def backtest(
-    strategy: str = typer.Argument(..., help="策略名，例如 ma_breakout"),
+    strategy: str = typer.Argument(..., help="策略名，例如 momentum"),
     start: str = typer.Option("2023-01-01", "--start", help="回测开始日期"),
     end: str = typer.Option(_today_str(), "--end", help="回测结束日期"),
-    capital: float = typer.Option(100_000.0, "--capital", help="初始资金"),
+    capital: float = typer.Option(30_000.0, "--capital", help="初始资金"),
     universe: Optional[str] = typer.Option(
         None,
         "--universe",
@@ -245,11 +245,11 @@ def backtest(
 @app.command("compare")
 def compare_cmd(
     strategies: list[str] = typer.Argument(
-        ..., help="要对比的策略名列表，例如: ma_breakout relative_strength momentum"
+        ..., help="要对比的策略名列表，例如: momentum ma_boll"
     ),
     start: str = typer.Option("2023-01-01", "--start"),
     end: str = typer.Option(_today_str(), "--end"),
-    capital: float = typer.Option(100_000.0, "--capital"),
+    capital: float = typer.Option(30_000.0, "--capital"),
     universe: str = typer.Option(
         "hs300", "--universe", help="hs300 / main_board / custom"
     ),
@@ -456,9 +456,9 @@ def _resolve_universe(store: DuckStore, universe: str, codes: Optional[str]) -> 
 @app.command("scan")
 def scan_cmd(
     strategies: str = typer.Option(
-        "ma_breakout,ma_boll,momentum,momentum_breakout,relative_strength",
+        "momentum,ma_boll",
         "--strategies",
-        help="逗号分隔的策略名",
+        help="逗号分隔的策略名；默认只跑 momentum,ma_boll",
     ),
     universe: str = typer.Option(
         "hs300", "--universe", help="股票池 hs300 / main_board / custom"

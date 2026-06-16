@@ -1,12 +1,12 @@
 name: momentum
-description: 绝对动量 + 风控层追踪止损（每日扫描，仓位上限 10）
+description: 绝对动量 + 风控层追踪止损（每日扫描，仓位上限 5，适配 3 万本金）
 
 params:
   mom_window: 20
   entry_threshold: 0.03       # 过去 20 日 +3% 入场
   exit_threshold: -0.03       # 过去 20 日 -3% 信号反转离场
   drawdown_from_peak: 0.10    # 当前价距 20 日最高不能低于 90%
-  max_positions: 10
+  max_positions: 5            # 与默认 3 万本金、100 股一手、集中度风控对齐
   min_price: 1.0
   min_float_cap: 2000000000    # 盘口：最小流通市值 20 亿（过滤微盘庄股）
   max_float_cap: 0             # 盘口：最大流通市值上限（0=不限）
@@ -19,7 +19,8 @@ risk:
     threshold: 0.12           # 持仓期峰值回撤 12% 强平
   concentration:
     enabled: true
-    max_weight: 0.15          # 单票市值占比不超过 15%
+    # 等权 N 只时单票约 1/N；N=5 需 ≥0.20，略放宽以覆盖一手取整
+    max_weight: 0.22
   portfolio_drawdown:
     enabled: true
     threshold: 0.20           # 组合净值从峰值回撤 20% 熔断全平

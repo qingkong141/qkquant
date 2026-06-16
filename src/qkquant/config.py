@@ -36,7 +36,7 @@ class DataSettings(BaseModel):
 
 
 class BacktestSettings(BaseModel):
-    initial_capital: float = 100_000.0
+    initial_capital: float = 30_000.0
     commission_rate: float = 0.00025
     commission_min: float = 5.0
     stamp_tax: float = 0.001

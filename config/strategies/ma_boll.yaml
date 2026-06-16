@@ -8,8 +8,9 @@ params:
   boll_dev: 2.0                # 行业标准 2σ
   upper_buffer: 0.03           # 距上轨 3% 才进
   mid_break_pct: 0.05          # 跌破中轨 5% 强出
-  max_positions: 10
+  max_positions: 5             # 3 万本金下每只约 6000 元，避免过度分散导致买不成一手
   min_price: 1.0
+  cross_lookback: 2            # 金叉后 2 天内仍允许入场
 
 universe:
   source: hs300

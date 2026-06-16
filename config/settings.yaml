@@ -9,7 +9,7 @@ data:
     request_sleep_ms: 150   # 避免 akshare 限频
 
 backtest:
-  initial_capital: 100000
+  initial_capital: 30000
   commission_rate: 0.00025      # 佣金万 2.5
   commission_min: 5.0           # 最低 5 元
   stamp_tax: 0.001              # 印花税千 1（卖出）

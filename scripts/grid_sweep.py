@@ -44,7 +44,7 @@ def run_one(
     start: str,
     end: str,
     params_override: dict,
-    capital: float = 100_000.0,
+    capital: float = 30_000.0,
 ) -> dict:
     info = get_strategy("grid_trading")
     cfg = load_strategy_config(info)

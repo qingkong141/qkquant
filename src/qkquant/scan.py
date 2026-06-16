@@ -10,7 +10,6 @@
 - SELL 信号：分两类——
   1) 你 positions.yaml 里真实持有的 → 优先关注
   2) 策略模拟仓里持有但你没有的 → 仅供参考
-- relative_strength 是周期性调仓（每 20 个 bar），非调仓日没有信号是正常的。
 """
 
 from __future__ import annotations
@@ -54,7 +53,7 @@ def scan_strategy(
     strategy_name: str,
     codes: list[str],
     as_of: date,
-    capital: float = 1_000_000.0,
+    capital: float = 30_000.0,
 ) -> StrategySignals:
     info = get_strategy(strategy_name)
     cfg = load_strategy_config(info)
@@ -192,7 +191,6 @@ def format_signals(
     out.append("---")
     out.append("注意: 信号基于收盘价。明日开盘下单可能有滑点；")
     out.append("      涨停一字板买不进，跌停一字板卖不出，请预判。")
-    out.append("注意: relative_strength 每 20 个 bar 才调仓一次，非调仓日无信号是正常的。")
 
     return "\n".join(out)
 
@@ -285,6 +283,7 @@ def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
     upper_buffer = float(params.get("upper_buffer", 0.03))
     mid_break_pct = float(params.get("mid_break_pct", 0.05))
     min_price = float(params.get("min_price", 1.0))
+    cross_lookback = max(1, int(params.get("cross_lookback", 2)))
 
     if len(df) < max(slow, boll_period) + 1:
         return {"buy": False, "sell": False, "score": 0.0, "metrics": {}}
@@ -296,7 +295,17 @@ def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
     yest_fast = float(closes[-fast - 1 : -1].mean())
     yest_slow = float(closes[-slow - 1 : -1].mean())
 
-    cross_up = (today_fast > today_slow) and (yest_fast <= yest_slow)
+    recent_cross_up = False
+    max_offset = min(cross_lookback, len(df) - slow)
+    for offset in range(max_offset):
+        end = len(closes) - offset
+        cur_fast = float(closes[end - fast : end].mean())
+        cur_slow = float(closes[end - slow : end].mean())
+        prev_fast = float(closes[end - fast - 1 : end - 1].mean())
+        prev_slow = float(closes[end - slow - 1 : end - 1].mean())
+        if cur_fast > cur_slow and prev_fast <= prev_slow:
+            recent_cross_up = True
+            break
     cross_down = (today_fast < today_slow) and (yest_fast >= yest_slow)
 
     boll_window = closes[-boll_period:]
@@ -309,7 +318,8 @@ def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
     not_at_upper = today_close <= boll_upper * (1 - upper_buffer)
 
     buy = (
-        cross_up
+        recent_cross_up
+        and today_fast > today_slow
         and today_close >= min_price
         and above_mid
         and not_at_upper
@@ -321,12 +331,16 @@ def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
     if sell:
         sell_reason = "ma_cross_down" if cross_down else "below_boll_mid"
 
+    band_position = (today_close - boll_mid) / (boll_upper - boll_mid) if boll_upper > boll_mid else 0.0
+    score = today_fast / max(today_slow, 1e-6) - 1.0
+    score -= max(band_position - 0.75, 0.0) * 0.05
+
     return {
         "buy": buy,
         "sell": sell,
         "buy_reason": "ma_boll_entry" if buy else None,
         "sell_reason": sell_reason,
-        "score": today_fast / max(today_slow, 1e-6) - 1.0,
+        "score": score,
         "metrics": {
             "close": today_close,
             "fast_ma": today_fast,
@@ -334,9 +348,7 @@ def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
             "boll_mid": boll_mid,
             "boll_upper": boll_upper,
             "boll_lower": boll_lower,
-            "band_position": (today_close - boll_mid) / (boll_upper - boll_mid)
-            if boll_upper > boll_mid
-            else 0.0,
+            "band_position": band_position,
         },
     }
 
@@ -667,7 +679,10 @@ def format_raw_signals(
     out.append("> 不跑回测、不受模拟仓状态和风控熔断影响；纯今日条件判断")
     out.append("")
 
-    for name in ["ma_breakout", "ma_boll", "momentum", "momentum_breakout", "relative_strength"]:
+    ordered_names = ["momentum", "ma_boll"] + [
+        name for name in results if name not in {"momentum", "ma_boll"}
+    ]
+    for name in ordered_names:
         if name not in results:
             continue
         r = results[name]

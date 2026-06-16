@@ -27,7 +27,7 @@ def run_one(
     end: str,
     commission: float,
     slippage: float,
-    capital: float = 100_000.0,
+    capital: float = 30_000.0,
 ) -> dict:
     info = get_strategy(strategy_name)
     cfg = load_strategy_config(info)
