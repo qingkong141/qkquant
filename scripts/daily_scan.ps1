@@ -35,9 +35,9 @@ if ($LASTEXITCODE -ne 0) {
     "[$(Get-Date)] update-data failed (exit $LASTEXITCODE), continue scan anyway" | Tee-Object -FilePath $LogFile -Append
 }
 
-# 2) 跑裸信号扫描并推送
-"[$(Get-Date)] step 2: scan --raw --push ..." | Tee-Object -FilePath $LogFile -Append
-& $Qkquant scan --raw --push *>> $LogFile
+# 2) 跑裸信号扫描并推送 + 自动跟单更新持仓
+"[$(Get-Date)] step 2: scan --raw --push --auto-position ..." | Tee-Object -FilePath $LogFile -Append
+& $Qkquant scan --raw --push --auto-position *>> $LogFile
 
 # 3) 跟踪 watchlist 累计涨跌 + alpha
 "[$(Get-Date)] step 3: track --push ..." | Tee-Object -FilePath $LogFile -Append

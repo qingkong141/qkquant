@@ -479,6 +479,11 @@ def scan_cmd(
         "--raw",
         help="裸信号模式：不跑回测，直接对每只股票算今日入场条件（忽略模拟仓和风控熔断）",
     ),
+    auto_position: bool = typer.Option(
+        False,
+        "--auto-position",
+        help="自动跟单：BUY 信号自动加仓到 positions.yaml，SELL 信号自动移除",
+    ),
     ai: bool = typer.Option(
         False,
         "--ai/--no-ai",
@@ -555,6 +560,33 @@ def scan_cmd(
                 f"{text}\n\n## AI 分析\n\n"
                 "AI 分析当前仅支持 `--raw` 裸信号模式；原始扫描结果不受影响。"
             )
+
+    if auto_position and raw:
+        added = 0
+        removed = 0
+        for sname, r in results.items():
+            for b in r.get("buys", []):
+                code = b["code"]
+                if code not in holdings:
+                    name = name_map.get(code, "")
+                    close_price = b.get("metrics", {}).get("close", 0)
+                    holdings[code] = {
+                        "code": code,
+                        "qty": 100,
+                        "cost": close_price,
+                        "bought_at": str(as_of_d),
+                        "note": f"auto - {sname}",
+                    }
+                    added += 1
+            for s in r.get("sells", []):
+                code = s["code"]
+                if code in holdings:
+                    del holdings[code]
+                    removed += 1
+        pos_list = sorted(holdings.values(), key=lambda x: x.get("bought_at", ""))
+        with holdings_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump({"positions": pos_list}, f, allow_unicode=True, default_flow_style=False)
+        console.print(f"[green]auto-position: +{added} -{removed}, {len(pos_list)} total[/green]")
 
     if save:
         out_dir = PROJECT_ROOT / "reports"
