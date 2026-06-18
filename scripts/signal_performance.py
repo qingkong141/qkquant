@@ -23,7 +23,6 @@ from qkquant.factors.indicators import adx as compute_adx
 from qkquant.logger import logger
 from qkquant.scan import (
     _raw_momentum,
-    _raw_ma_boll,
     _raw_ma_breakout,
     _raw_momentum_breakout,
 )

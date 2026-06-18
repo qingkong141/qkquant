@@ -15,6 +15,7 @@ from typing import Optional
 
 import pandas as pd
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -456,9 +457,9 @@ def _resolve_universe(store: DuckStore, universe: str, codes: Optional[str]) -> 
 @app.command("scan")
 def scan_cmd(
     strategies: str = typer.Option(
-        "momentum,ma_boll",
+        "动量策略",
         "--strategies",
-        help="逗号分隔的策略名；默认只跑 momentum,ma_boll",
+        help="逗号分隔的策略名；默认只跑 动量策略",
     ),
     universe: str = typer.Option(
         "hs300", "--universe", help="股票池 hs300 / main_board / custom"
@@ -545,6 +546,25 @@ def scan_cmd(
             from qkquant.ai import analyze_raw_signals, format_ai_section, load_ai_config
 
             ai_cfg = load_ai_config(PROJECT_ROOT / "config" / "ai.yaml")
+
+            # 大盘上下文（HS300 近期表现）
+            market_notes = []
+            hs300_codes = store.load_index_constituents("000300")
+            if hs300_codes:
+                hs300_df = store.load_daily(codes=hs300_codes, start=as_of_d - pd.Timedelta(days=180), end=as_of_d, adjust="qfq")
+                if not hs300_df.empty:
+                    daily = hs300_df.groupby("trade_date")["close"].mean()
+                    if len(daily) >= 60:
+                        hs300_1m = (daily.iloc[-1] / daily.iloc[-20] - 1) * 100 if len(daily) >= 20 else 0
+                        hs300_3m = (daily.iloc[-1] / daily.iloc[-60] - 1) * 100 if len(daily) >= 60 else 0
+                        ma60 = float(daily.rolling(60).mean().iloc[-1])
+                        above_ma = "上方" if daily.iloc[-1] > ma60 else "下方"
+                        market_notes = [
+                            f"HS300 近 1 月: {hs300_1m:+.1f}%  近 3 月: {hs300_3m:+.1f}%",
+                            f"HS300 当前处于 MA60 {above_ma}（{daily.iloc[-1]:.0f} vs {ma60:.0f}）",
+                            "以上大盘数据仅供 AI 参考，非预测",
+                        ]
+
             ai_response = analyze_raw_signals(
                 results,
                 holdings,
@@ -554,7 +574,11 @@ def scan_cmd(
                 universe_size=len(target_codes),
                 config=ai_cfg,
             )
-            text = f"{text}\n\n{format_ai_section(ai_response)}"
+            # 注入大盘点评到 AI 结果之前
+            market_section = ""
+            if market_notes:
+                market_section = "## 大盘背景\n\n" + "\n".join(f"- {n}" for n in market_notes) + "\n\n---\n\n"
+            text = f"{text}\n\n{market_section}{format_ai_section(ai_response)}"
         else:
             text = (
                 f"{text}\n\n## AI 分析\n\n"

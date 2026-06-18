@@ -97,10 +97,13 @@ class _EntryTracker(RiskRule):
                 self._peak_price.pop(code, None)
 
     def on_bar(self, strat: "bt.Strategy") -> None:
+        from qkquant.logger import logger
         for data in strat.datas:
             code = data._name
             pos = strat.getposition(data)
             if pos.size <= 0:
+                self._entry_price.pop(code, None)
+                self._peak_price.pop(code, None)
                 continue
             try:
                 close = float(data.close[0])
@@ -110,8 +113,17 @@ class _EntryTracker(RiskRule):
                 # 防御：没追到入场事件时用当前 close 初始化
                 self._peak_price[code] = close
                 self._entry_price.setdefault(code, close)
+                logger.debug(f"[{self.name}] {code} entry fallback: close={close:.2f}")
             else:
                 self._peak_price[code] = max(self._peak_price[code], close)
+                entry = self._entry_price.get(code, 0)
+                if entry > 0:
+                    dd = (close / entry - 1) * 100
+                    if dd < -5:  # 只在回撤较大时打印
+                        logger.info(
+                            f"[{self.name}] {code} entry={entry:.2f} close={close:.2f} "
+                            f"dd={dd:.1f}% peak={self._peak_price[code]:.2f}"
+                        )
 
 
 class PositionStopLossRule(_EntryTracker):
@@ -137,8 +149,9 @@ class PositionStopLossRule(_EntryTracker):
                 close = float(data.close[0])
             except Exception:
                 continue
-            if close <= entry * (1 - self.threshold):
-                exits.append((code, f"position_stop:-{self.threshold:.0%}"))
+            drawdown = (close / entry - 1) * 100
+            if drawdown <= -self.threshold * 100:
+                exits.append((code, f"position_stop:{drawdown:.1f}%"))
         return exits
 
 

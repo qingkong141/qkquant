@@ -36,6 +36,9 @@ class MomentumStrategy(BtStrategyBase):
         ("take_profit_pct", 0.15),          # 分批止盈：盈利超此比例卖一半；0=关闭
         ("time_stop_days", 60),             # 时间止损：持仓超此天数强制清仓；0=关闭
         ("atr_weight", False),              # ATR 波动率倒数加权仓位；高波票少配
+        ("resonance_only", False),          # 共振模式：仅买入动量突破也看中的票
+        ("market_resonance", False),        # 大盘共振：HS300<MA60 时空仓不买
+        ("chan_filter", False),             # 缠论中枢过滤：只买中枢上方的票
         ("vol_confirm", True),              # 量价确认：放量突破才买入
         ("vol_ratio_min", 0.8),             # 当日量必须 > 20日均量×此倍率
         ("min_up_ratio", 0.50),             # 连涨比率：mom_window 内上涨天数占比下限
@@ -64,6 +67,51 @@ class MomentumStrategy(BtStrategyBase):
 
     def _current_positions(self) -> list[str]:
         return [d._name for d in self.datas if self.getposition(d).size > 0]
+
+    def _chan_above(self, data) -> bool:
+        """缠论中枢过滤：当前价是否在中枢上方（允许买入）。
+
+        快速简化版：用最近 80 根 K 线的局部高低点找中枢，
+        如果当前价 > 最后一个中枢的上沿，返回 True。
+        """
+        lookback = min(len(data), 80)
+        if lookback < 30:
+            return True  # 数据不足，不拦
+
+        import numpy as np
+        highs = np.array([float(data.high[-i]) for i in range(lookback - 1, -1, -1)])
+        lows = np.array([float(data.low[-i]) for i in range(lookback - 1, -1, -1)])
+
+        # 找局部极值
+        swings = []
+        n = len(highs)
+        for i in range(4, n - 4):
+            if all(highs[i] >= highs[i-j] for j in range(1,5)) and all(highs[i] > highs[i+j] for j in range(1,5)):
+                swings.append({"type": "high", "price": float(highs[i])})
+            if all(lows[i] <= lows[i-j] for j in range(1,5)) and all(lows[i] < lows[i+j] for j in range(1,5)):
+                swings.append({"type": "low", "price": float(lows[i])})
+        # 交替过滤
+        filtered = []
+        for s in swings:
+            if not filtered or s["type"] != filtered[-1]["type"]:
+                filtered.append(s)
+        if len(filtered) < 6:
+            return True
+
+        # 找最后 3 笔的重叠区间
+        last_highs = [s["price"] for s in filtered[-6:] if s["type"] == "high"][:3]
+        last_lows = [s["price"] for s in filtered[-6:] if s["type"] == "low"][:3]
+        if len(last_highs) < 3 or len(last_lows) < 3:
+            return True
+
+        zg = min(last_highs)  # 中枢上沿
+        zd = max(last_lows)   # 中枢下沿
+
+        if zg <= zd:
+            return True
+
+        current = float(data.close[0])
+        return current > zg  # 价格在中枢上方 → 允许买入
 
     def next(self) -> None:
         # 0. 风控强平（trailing stop 等都在这里跑）
@@ -136,6 +184,12 @@ class MomentumStrategy(BtStrategyBase):
         if slots <= 0:
             return
 
+        # 大盘共振：HS300<MA60 时空仓
+        if self.p.market_resonance:
+            trend = self.p.hs300_trend or {}
+            if not trend.get(today, True):
+                return
+
         candidates: list[tuple[str, float]] = []
         for data in self.datas:
             code = data._name
@@ -183,6 +237,23 @@ class MomentumStrategy(BtStrategyBase):
                 eps = eps_map.get(code, 0)
                 if eps > 0 and close / eps > max_pe:
                     continue
+
+            # 共振模式：必须也满足动量突破的条件
+            if self.p.resonance_only:
+                # m_breakout: entry_threshold=5%, drawdown=3%, 10日新高
+                if mom < 0.05:
+                    continue
+                if win_high > 0 and close < win_high * 0.97:
+                    continue
+                bw = 10
+                if len(data.close) > bw:
+                    prev_high_close = max(float(data.close[-i]) for i in range(1, bw + 1))
+                    if close < prev_high_close:
+                        continue
+
+            # 缠论中枢过滤：只买中枢上方的票（趋势已确认突破）
+            if self.p.chan_filter and not self._chan_above(data):
+                continue
 
             # 量价确认：今日量必须 > 20日均量×vol_ratio_min（缩量突破不可靠）
             if self.p.vol_confirm:
@@ -281,5 +352,24 @@ class MomentumStrategy(BtStrategyBase):
                     }
                 )
 
+
+    def notify_order(self, order: bt.Order) -> None:
+        """覆写基类：强制平仓的卖单也写入 _trade_log，确保图表和回测完整可见。"""
+        super().notify_order(order)
+        if order.status == order.Completed and order.issell():
+            code = order.data._name
+            price = float(order.executed.price)
+            qty = int(order.executed.size)
+            today = self._today()
+            # 避免重复记录（策略自己触发的卖单已在 next() 中写入）
+            for t in self._trade_log:
+                if t["date"] == today and t["code"] == code and t["side"] == "SELL":
+                    break
+            else:
+                self._trade_log.append({
+                    "date": today, "code": code, "side": "SELL",
+                    "price": price, "qty": qty, "reason": "forced_exit",
+                })
+                self._entry_price.pop(code, None)
 
 __all__ = ["MomentumStrategy"]

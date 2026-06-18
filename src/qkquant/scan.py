@@ -303,90 +303,6 @@ def _raw_ma_breakout(df: pd.DataFrame, params: dict) -> dict:
     }
 
 
-def _raw_ma_boll(df: pd.DataFrame, params: dict) -> dict:
-    """ma_breakout + 布林带过滤的裸信号。"""
-    fast = int(params.get("fast", 5))
-    slow = int(params.get("slow", 20))
-    boll_period = int(params.get("boll_period", 20))
-    boll_dev = float(params.get("boll_dev", 2.0))
-    upper_buffer = float(params.get("upper_buffer", 0.03))
-    mid_break_pct = float(params.get("mid_break_pct", 0.05))
-    min_price = float(params.get("min_price", 1.0))
-    cross_lookback = max(1, int(params.get("cross_lookback", 2)))
-
-    if len(df) < max(slow, boll_period) + 1:
-        return {"buy": False, "sell": False, "score": 0.0, "metrics": {}}
-
-    closes = df["close"].to_numpy()
-    today_close = float(closes[-1])
-    today_fast = float(closes[-fast:].mean())
-    today_slow = float(closes[-slow:].mean())
-    yest_fast = float(closes[-fast - 1 : -1].mean())
-    yest_slow = float(closes[-slow - 1 : -1].mean())
-
-    recent_cross_up = False
-    max_offset = min(cross_lookback, len(df) - slow)
-    for offset in range(max_offset):
-        end = len(closes) - offset
-        cur_fast = float(closes[end - fast : end].mean())
-        cur_slow = float(closes[end - slow : end].mean())
-        prev_fast = float(closes[end - fast - 1 : end - 1].mean())
-        prev_slow = float(closes[end - slow - 1 : end - 1].mean())
-        if cur_fast > cur_slow and prev_fast <= prev_slow:
-            recent_cross_up = True
-            break
-    cross_down = (today_fast < today_slow) and (yest_fast >= yest_slow)
-
-    boll_window = closes[-boll_period:]
-    boll_mid = float(boll_window.mean())
-    boll_std = float(boll_window.std(ddof=0))
-    boll_upper = boll_mid + boll_dev * boll_std
-    boll_lower = boll_mid - boll_dev * boll_std
-
-    above_mid = today_close > boll_mid
-    not_at_upper = today_close <= boll_upper * (1 - upper_buffer)
-
-    buy = (
-        recent_cross_up
-        and today_fast > today_slow
-        and today_close >= min_price
-        and above_mid
-        and not_at_upper
-    )
-    sell_break_mid = boll_mid > 0 and today_close < boll_mid * (1 - mid_break_pct)
-    sell = cross_down or sell_break_mid
-
-    sell_reason = None
-    if sell:
-        sell_reason = "ma_cross_down" if cross_down else "below_boll_mid"
-
-    band_position = (today_close - boll_mid) / (boll_upper - boll_mid) if boll_upper > boll_mid else 0.0
-    score = today_fast / max(today_slow, 1e-6) - 1.0
-    score -= max(band_position - 0.75, 0.0) * 0.05
-
-    # ADX 趋势强度过滤：震荡市禁止买入
-    if buy and not _adx_ok(df, params):
-        buy = False
-        buy_reason = None
-
-    return {
-        "buy": buy,
-        "sell": sell,
-        "buy_reason": "ma_boll_entry" if buy else None,
-        "sell_reason": sell_reason,
-        "score": score,
-        "metrics": {
-            "close": today_close,
-            "fast_ma": today_fast,
-            "slow_ma": today_slow,
-            "boll_mid": boll_mid,
-            "boll_upper": boll_upper,
-            "boll_lower": boll_lower,
-            "band_position": band_position,
-        },
-    }
-
-
 def _raw_momentum(df: pd.DataFrame, params: dict) -> dict:
     mom_window = int(params.get("mom_window", 20))
     entry_threshold = float(params.get("entry_threshold", 0.03))
@@ -692,31 +608,7 @@ def scan_raw(
         if params.get("adx_market_filter") and hs300_above_ma60:
             params["adx_threshold"] = 0
 
-        if name == "ma_boll":
-            cap = int(params.get("max_positions", 10))
-            strat_cd = cooldowns.get(name, {})
-            for code, df in price_data.items():
-                sig = _raw_ma_boll(df, params)
-                row = {"code": code, **sig}
-                if sig.get("buy"):
-                    cd = strat_cd.get(code)
-                    if cd and as_of <= cd:
-                        continue  # 冷却期内
-                    # PE 估值过滤
-                    max_pe = int(params.get("max_pe", 0))
-                    if max_pe > 0:
-                        eps = eps_map.get(code, 0)
-                        close_price = sig.get("metrics", {}).get("close", 0)
-                        if eps > 0 and close_price > 0 and close_price / eps > max_pe:
-                            continue
-                    results[name]["buys"].append(row)
-                if sig.get("sell") and code in holdings:
-                    results[name]["sells"].append(row)
-            results[name]["buys"].sort(key=lambda x: -x["score"])
-            max_per_ind = int(params.get("max_per_industry", 0))
-            results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
-
-        elif name == "ma_breakout":
+        if name == "ma_breakout":
             cap = int(params.get("max_positions", 10))
             strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
@@ -740,7 +632,7 @@ def scan_raw(
             max_per_ind = int(params.get("max_per_industry", 0))
             results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
 
-        elif name == "momentum":
+        elif name in ("momentum", "动量策略"):
             cap = int(params.get("max_positions", 10))
             strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
@@ -765,7 +657,7 @@ def scan_raw(
             max_per_ind = int(params.get("max_per_industry", 0))
             results[name]["buys"] = _apply_industry_limit(results[name]["buys"], cap, max_per_ind)
 
-        elif name == "momentum_breakout":
+        elif name in ("momentum_breakout", "动量突破"):
             cap = int(params.get("max_positions", 8))
             strat_cd = cooldowns.get(name, {})
             for code, df in price_data.items():
@@ -845,7 +737,6 @@ def format_raw_signals(
 
     titles = {
         "ma_breakout": "ma_breakout (双均线突破: fast/slow 金叉)",
-        "ma_boll": "ma_boll (双均线 + 布林带: 金叉+中轨上方+不近上轨)",
         "momentum": "momentum (绝对动量: 20日累计涨幅+近高点过滤)",
         "momentum_breakout": "momentum_breakout (动量突破: 强动量+紧贴峰值+创新高)",
         "relative_strength": "relative_strength (横截面: 60日涨幅排名)",
@@ -856,8 +747,8 @@ def format_raw_signals(
     out.append("> 不跑回测、不受模拟仓状态和风控熔断影响；纯今日条件判断")
     out.append("")
 
-    ordered_names = ["momentum", "ma_boll"] + [
-        name for name in results if name not in {"momentum", "ma_boll"}
+    ordered_names = ["momentum"] + [
+        name for name in results if name != "momentum"
     ]
     for name in ordered_names:
         if name not in results:

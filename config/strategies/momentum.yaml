@@ -1,11 +1,11 @@
-name: momentum
-description: 绝对动量 + 风控层追踪止损（每日扫描，仓位上限 5，适配 3 万本金）
+name: 动量策略
+description: 绝对动量 + 趋势过滤 + 分批止盈 + 行业中性
 
 params:
   mom_window: 20
   entry_threshold: 0.03       # 过去 20 日 +3% 入场
   exit_threshold: -0.03       # 过去 20 日 -3% 信号反转离场
-  drawdown_from_peak: 0.10    # 当前价距 20 日最高不能低于 90%
+  drawdown_from_peak: 0.05    # 当前价距 20 日最高 ≤5%（收紧跟趋势）
   max_positions: 5            # 与默认 3 万本金、100 股一手、集中度风控对齐
   min_price: 1.0
   adx_threshold: 20            # ADX 趋势强度过滤：<20 视为震荡市，禁止买入；0=关闭
@@ -16,6 +16,7 @@ params:
   take_profit_pct: 0.15         # 分批止盈：盈利超此比例卖一半；0=关闭
   time_stop_days: 0             # 时间止损（回测负贡献，保持关闭）
   atr_weight: false             # ATR 波动率仓位（回测负贡献，保持关闭）
+  chan_filter: false            # 缠论中枢过滤（与现有高点过滤重叠，保持关闭）
   vol_confirm: false            # 量价确认（回测负贡献，A股缩量上行常见）
   vol_ratio_min: 0.8            # 当日量 > 20日均量×倍率
   min_up_ratio: 0.0             # 连涨比率下限（回测负贡献）

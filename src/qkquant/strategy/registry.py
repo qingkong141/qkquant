@@ -11,8 +11,9 @@ import yaml
 from qkquant.backtest.engine import BtStrategyBase
 from qkquant.config import PROJECT_ROOT
 from qkquant.risk import RiskConfig
-from qkquant.strategy.ma_boll import MaBollStrategy
+from qkquant.strategy.chan import Chan2BuyStrategy
 from qkquant.strategy.momentum import MomentumStrategy
+from qkquant.strategy.momentum_breakout import MomentumBreakoutStrategy
 
 
 @dataclass
@@ -25,28 +26,42 @@ class StrategyInfo:
 
 _STRAT_DIR = PROJECT_ROOT / "config" / "strategies"
 
-# 生产入口只保留这两个策略。旧策略源码和配置作为历史实验保留，
-# 但不再注册到 CLI / scan 的可用策略列表中。
 _REGISTRY: dict[str, StrategyInfo] = {
     "momentum": StrategyInfo(
-        name="momentum",
+        name="动量策略",
         cls=MomentumStrategy,
-        description="绝对动量 + 追踪止损（每日扫描，上限 10 只）",
+        description="绝对动量 + 趋势过滤 + 分批止盈 + 行业中性",
         config_path=_STRAT_DIR / "momentum.yaml",
     ),
-    "ma_boll": StrategyInfo(
-        name="ma_boll",
-        cls=MaBollStrategy,
-        description="双均线 + 布林带（金叉+趋势确认+不追高+中轨止损）",
-        config_path=_STRAT_DIR / "ma_boll.yaml",
+    "momentum_breakout": StrategyInfo(
+        name="动量突破",
+        cls=MomentumBreakoutStrategy,
+        description="强动量+紧贴峰值+创10日新高，追真正的突破",
+        config_path=_STRAT_DIR / "momentum_breakout.yaml",
+    ),
+    "chan_2buy": StrategyInfo(
+        name="缠论二买",
+        cls=Chan2BuyStrategy,
+        description="一买确认反转后，回踩不破前低入场",
+        config_path=_STRAT_DIR / "chan_2buy.yaml",
+    ),
+    "resonance": StrategyInfo(
+        name="动量共振",
+        cls=MomentumStrategy,
+        description="动量策略 + 动量突破 共振：两策略同时看中才买入",
+        config_path=_STRAT_DIR / "resonance.yaml",
     ),
 }
 
 
 def get_strategy(name: str) -> StrategyInfo:
-    if name not in _REGISTRY:
-        raise KeyError(f"unknown strategy: {name}. Available: {list(_REGISTRY)}")
-    return _REGISTRY[name]
+    # 先按 key 查找，再按显示名查找
+    if name in _REGISTRY:
+        return _REGISTRY[name]
+    for info in _REGISTRY.values():
+        if info.name == name:
+            return info
+    raise KeyError(f"unknown strategy: {name}. Available: {[s.name for s in _REGISTRY.values()]}")
 
 
 def list_strategies() -> list[StrategyInfo]:

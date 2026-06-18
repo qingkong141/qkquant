@@ -1,0 +1,26 @@
+name: chan_2buy
+description: 缠论二买 —— 一买确认反转后，回踩不破前低入场
+
+params:
+  max_positions: 5
+  min_price: 1.0
+  lookback: 100               # 中枢计算回看 K 线数
+  swing_min_bars: 3           # 笔的最小确认 K 线（放宽）
+  rebound_pct: 0.03           # 一买后至少反弹 3% 才找二买（放宽）
+  stop_at_first_buy: true     # 跌破一买低点全平
+  take_profit_pct: 0.15       # 分批止盈 15%
+
+risk:
+  trailing_stop:
+    enabled: true
+    threshold: 0.10
+  concentration:
+    enabled: true
+    max_weight: 0.22
+  portfolio_drawdown:
+    enabled: true
+    threshold: 0.15
+    cooldown_days: 20
+
+universe:
+  source: hs300

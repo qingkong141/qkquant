@@ -30,12 +30,15 @@ class MomentumBreakoutStrategy(BtStrategyBase):
         ("max_float_cap", 0),              # 盘口：最大流通市值上限（0=不限）
         ("min_amount", 5_000_000),         # 盘口：最小成交额 500 万
         ("market_caps", None),             # 内部：由引擎注入
+        ("take_profit_pct", 0.15),          # 分批止盈：盈利超此比例卖一半；0=关闭
     )
 
     def __init__(self) -> None:
         super().__init__()
         self._trade_log: list[dict] = []
         self._mc: dict[str, dict] = self.p.market_caps or {}
+        self._entry_price: dict[str, float] = {}
+        self._held_since: dict[str, int] = {}
 
     def _window_return(self, data) -> float:
         w = self.p.mom_window
@@ -67,13 +70,40 @@ class MomentumBreakoutStrategy(BtStrategyBase):
         self.apply_forced_exits()
         today = self._today()
 
-        # 1. 出场（动量反转）
+        # 更新持仓追踪
+        for data in self.datas:
+            code = data._name
+            pos = self.getposition(data)
+            if pos.size <= 0:
+                self._held_since.pop(code, None)
+                self._entry_price.pop(code, None)
+                continue
+            self._held_since[code] = self._held_since.get(code, 0) + 1
+
+        # 1. 出场
         for data in self.datas:
             code = data._name
             pos = self.getposition(data)
             if pos.size <= 0:
                 continue
             close = float(data.close[0])
+            entry = self._entry_price.get(code, close)
+
+            # 分批止盈
+            if self.p.take_profit_pct > 0 and entry > 0:
+                gain = close / entry - 1.0
+                if gain >= self.p.take_profit_pct and pos.size > 100:
+                    half = (pos.size // 200) * 100
+                    if half > 0:
+                        order = self.safe_sell(data, half, reason="take_profit")
+                        if order is not None:
+                            self._trade_log.append({
+                                "date": today, "code": code, "side": "SELL",
+                                "price": close, "qty": half,
+                                "reason": f"take_profit:{gain:+.1%}",
+                            })
+
+            # 动量反转退出
             mom = self._window_return(data)
             if mom < self.p.exit_threshold:
                 order = self.safe_sell(data, pos.size, reason="momentum_exit")
@@ -156,6 +186,8 @@ class MomentumBreakoutStrategy(BtStrategyBase):
                 continue
             order = self.safe_buy(data, qty, reason="breakout_entry")
             if order is not None:
+                self._entry_price[code] = close
+                self._held_since[code] = 0
                 self._trade_log.append(
                     {
                         "date": today,
@@ -167,5 +199,23 @@ class MomentumBreakoutStrategy(BtStrategyBase):
                     }
                 )
 
+
+    def notify_order(self, order: bt.Order) -> None:
+        """强制平仓的卖单也写入 _trade_log。"""
+        super().notify_order(order)
+        if order.status == order.Completed and order.issell():
+            code = order.data._name
+            price = float(order.executed.price)
+            qty = int(order.executed.size)
+            today = self._today()
+            for t in self._trade_log:
+                if t["date"] == today and t["code"] == code and t["side"] == "SELL":
+                    break
+            else:
+                self._trade_log.append({
+                    "date": today, "code": code, "side": "SELL",
+                    "price": price, "qty": qty, "reason": "forced_exit",
+                })
+                self._entry_price.pop(code, None)
 
 __all__ = ["MomentumBreakoutStrategy"]

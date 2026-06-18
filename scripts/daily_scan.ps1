@@ -7,8 +7,8 @@
 #   3) 跑 scan --raw 并推送到已启用通道
 # 日志：logs/daily_scan_YYYYMMDD.log
 #
-# 调度建议：每个交易日 16:30 触发（A股 15:00 收盘，留 1.5 小时给数据源算复权因子）
-# 注意：15:30 太早，baostock 当日复权因子可能还没更新好，会拉到脏数据
+# 调度建议：每个交易日 18:30 触发（东方财富日线约 17:30 发布，留 1h 余量）
+# 注意：16:30 太早，当日数据还未发布；baostock 天然 T+1 滞后不适用
 
 $ErrorActionPreference = "Continue"
 
@@ -28,6 +28,12 @@ if (-not (Test-Path $Qkquant)) {
 
 "[$(Get-Date)] === daily_scan start ===" | Tee-Object -FilePath $LogFile -Append
 
+# 临时关闭代理（东方财富直连更快更稳）
+$env:HTTP_PROXY = ""
+$env:HTTPS_PROXY = ""
+$env:http_proxy = ""
+$env:https_proxy = ""
+
 # 1) 增量拉今日数据
 "[$(Get-Date)] step 1: update-data --source auto --recent-days 10 ..." | Tee-Object -FilePath $LogFile -Append
 & $Qkquant update-data --universe hs300 --source auto --recent-days 10 *>> $LogFile
@@ -37,7 +43,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # 2) 跑裸信号扫描并推送 + 自动跟单更新持仓
 "[$(Get-Date)] step 2: scan --raw --push --auto-position ..." | Tee-Object -FilePath $LogFile -Append
-& $Qkquant scan --raw --push --auto-position *>> $LogFile
+& $Qkquant scan --raw --push --auto-position --ai *>> $LogFile
 
 # 3) 跟踪 watchlist 累计涨跌 + alpha
 "[$(Get-Date)] step 3: track --push ..." | Tee-Object -FilePath $LogFile -Append
