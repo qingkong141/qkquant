@@ -12,8 +12,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -60,6 +60,55 @@ def vol_20d(panel: Panel) -> pd.DataFrame:
     """过去 20 日日收益率的标准差。预期：低波动溢价，IC 为负。"""
     ret = panel["close"].pct_change(fill_method=None)
     return ret.rolling(window=20, min_periods=20).std()
+
+
+def risk_adjusted_mom_60d(panel: Panel) -> pd.DataFrame:
+    """60-day return divided by 60-day daily volatility."""
+    close = panel["close"]
+    vol = close.pct_change(fill_method=None).rolling(60, min_periods=60).std()
+    return _pct_change(close, 60) / vol.replace(0, np.nan)
+
+
+def trend_quality_60d(panel: Panel) -> pd.DataFrame:
+    """Slope times R-squared of a 60-day log-price regression."""
+    x = np.arange(60, dtype=float)
+    x_centered = x - x.mean()
+    x_ss = float(np.square(x_centered).sum())
+
+    def quality(values: np.ndarray) -> float:
+        if np.any(values <= 0) or np.isnan(values).any():
+            return np.nan
+        y = np.log(values)
+        y_centered = y - y.mean()
+        slope = float(np.dot(x_centered, y_centered) / x_ss)
+        y_ss = float(np.square(y_centered).sum())
+        r_squared = 0.0 if y_ss == 0 else float(np.dot(x_centered, y_centered) ** 2 / (x_ss * y_ss))
+        return slope * r_squared
+
+    return panel["close"].rolling(60, min_periods=60).apply(quality, raw=True)
+
+
+def downside_vol_20d(panel: Panel) -> pd.DataFrame:
+    ret = panel["close"].pct_change(fill_method=None).clip(upper=0)
+    return ret.rolling(20, min_periods=20).std()
+
+
+def max_drawdown_60d(panel: Panel) -> pd.DataFrame:
+    def drawdown(values: np.ndarray) -> float:
+        running_max = np.maximum.accumulate(values)
+        return float(np.min(values / running_max - 1))
+
+    return panel["close"].rolling(60, min_periods=60).apply(drawdown, raw=True)
+
+
+def amount_20d(panel: Panel) -> pd.DataFrame:
+    return panel["amount"].rolling(20, min_periods=20).mean()
+
+
+def amount_ratio_5_20(panel: Panel) -> pd.DataFrame:
+    amount = panel["amount"]
+    base = amount.rolling(20, min_periods=20).mean()
+    return amount.rolling(5, min_periods=5).mean() / base.replace(0, np.nan)
 
 
 def turnover_20d(panel: Panel) -> pd.DataFrame:
@@ -125,6 +174,30 @@ FACTOR_REGISTRY: dict[str, FactorSpec] = {
         expected_sign=-1,
         description="过去 20 日波动率（低波异象）",
     ),
+    "risk_adjusted_mom_60d": FactorSpec(
+        name="risk_adjusted_mom_60d", func=risk_adjusted_mom_60d, expected_sign=+1,
+        description="ETF 60日风险调整动量",
+    ),
+    "trend_quality_60d": FactorSpec(
+        name="trend_quality_60d", func=trend_quality_60d, expected_sign=+1,
+        description="ETF 60日对数价格趋势斜率 x R2",
+    ),
+    "downside_vol_20d": FactorSpec(
+        name="downside_vol_20d", func=downside_vol_20d, expected_sign=-1,
+        description="ETF 20日下行波动率",
+    ),
+    "max_drawdown_60d": FactorSpec(
+        name="max_drawdown_60d", func=max_drawdown_60d, expected_sign=+1,
+        description="ETF 60日滚动最大回撤（越接近0越好）",
+    ),
+    "amount_20d": FactorSpec(
+        name="amount_20d", func=amount_20d, expected_sign=+1,
+        description="ETF 20日平均成交额", required_fields=("amount",),
+    ),
+    "amount_ratio_5_20": FactorSpec(
+        name="amount_ratio_5_20", func=amount_ratio_5_20, expected_sign=+1,
+        description="ETF 5日/二十日平均成交额比", required_fields=("amount",),
+    ),
     "turnover_20d": FactorSpec(
         name="turnover_20d",
         func=turnover_20d,
@@ -170,6 +243,12 @@ __all__ = [
     "mom_120d",
     "reversal_5d",
     "vol_20d",
+    "risk_adjusted_mom_60d",
+    "trend_quality_60d",
+    "downside_vol_20d",
+    "max_drawdown_60d",
+    "amount_20d",
+    "amount_ratio_5_20",
     "turnover_20d",
     "amihud_20d",
     "rsi_14",

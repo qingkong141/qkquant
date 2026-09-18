@@ -54,7 +54,7 @@ def _make_bars(code: str, dates: list[date], seed: int) -> pd.DataFrame:
             "amount": volume * close,
             "pct_chg": pct_chg,
             "turnover": np.random.default_rng(seed + 5).uniform(0.5, 3.0, n),
-            "adjust": "hfq",
+            "adjust": "qfq",
         }
     )
     return df[DAILY_COLUMNS]
@@ -70,7 +70,10 @@ def synth_bars() -> pd.DataFrame:
         _make_bars("600036", dates, seed=4),
         _make_bars("601318", dates, seed=5),
     ]
-    return pd.concat(frames, ignore_index=True)
+    qfq = pd.concat(frames, ignore_index=True)
+    hfq = qfq.copy()
+    hfq["adjust"] = "hfq"
+    return pd.concat([qfq, hfq], ignore_index=True)
 
 
 @pytest.fixture

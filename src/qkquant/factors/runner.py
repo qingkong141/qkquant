@@ -54,7 +54,13 @@ def evaluate_factor(
     close = panel["close"]
 
     factor = compute_factor_values(panel, factor_name)
-    tradeable = build_tradeable_mask(panel)
+    instruments = store.load_instruments(codes)
+    limit_map = (
+        dict(zip(instruments["code"], instruments["limit_pct"], strict=True))
+        if not instruments.empty and "limit_pct" in instruments.columns
+        else None
+    )
+    tradeable = build_tradeable_mask(panel, limit_pct_by_code=limit_map)
     fwd = compute_forward_returns(close, horizons=horizons)
 
     ic_stats_by_horizon: dict[int, dict] = {}

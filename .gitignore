@@ -27,6 +27,12 @@ env/
 data/
 logs/
 reports/
+# The broad data/ rule also matches the Python package. Track the ETF data files
+# changed by this project while leaving existing ignored files untouched.
+!src/qkquant/data/
+src/qkquant/data/*
+!src/qkquant/data/fetcher.py
+!src/qkquant/data/storage.py
 *.duckdb
 *.duckdb.wal
 *.sqlite

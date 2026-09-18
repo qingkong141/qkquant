@@ -52,3 +52,19 @@ def test_upsert_idempotent(tmp_store: DuckStore):
     tmp_store.upsert_daily(existing)
     after = tmp_store.stats()["bars"]
     assert before == after, "re-upsert should not duplicate rows"
+
+
+def test_etf_instrument_roundtrip(tmp_path):
+    store = DuckStore(tmp_path / "etf.duckdb")
+    store.upsert_instruments(pd.DataFrame([{
+        "code": "510300", "name": "300ETF", "instrument_type": "etf",
+        "etf_category": "equity", "exchange": "SSE", "settlement_days": 1,
+        "lot_size": 100, "price_tick": 0.001, "limit_pct": 0.10,
+        "stamp_tax_rate": 0.0, "list_date": "2012-05-28",
+    }]))
+    assert store.load_etf_codes() == ["510300"]
+    row = store.load_instruments(["510300"]).iloc[0]
+    assert row["instrument_type"] == "etf"
+    assert row["stamp_tax_rate"] == 0
+    assert row["price_tick"] == 0.001
+    store.close()

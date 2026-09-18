@@ -19,20 +19,12 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from qkquant.config import get_settings
-from qkquant.data.board import is_cn_main_board
 from qkquant.data.fetcher import DataFetcher
 from qkquant.data.storage import DuckStore
 from qkquant.logger import logger, setup_logger
-from qkquant.strategy.registry import (
-    get_strategy,
-    list_strategies,
-    load_risk_config,
-    load_strategy_config,
-)
 
 app = typer.Typer(
-    help="qkquant - A股量化交易 MVP CLI",
+    help="qkquant - ETF 因子研究 CLI",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
 )
@@ -45,6 +37,13 @@ def _default_start() -> str:
 
 def _today_str() -> str:
     return date.today().isoformat()
+
+
+def _disabled_stock_strategy_command() -> None:
+    console.print(
+        "[yellow]个股策略已停用。当前仅开放 ETF 数据更新和因子研究命令。[/yellow]"
+    )
+    raise typer.Exit(code=2)
 
 
 @app.callback()
@@ -62,9 +61,9 @@ def update_data(
     since: str = typer.Option(_default_start(), "--since", help="起始日期 YYYY-MM-DD"),
     until: str = typer.Option(_today_str(), "--until", help="结束日期 YYYY-MM-DD"),
     universe: str = typer.Option(
-        "hs300",
+        "etf",
         "--universe",
-        help="股票池: hs300 / main_board / all / custom（搭配 --codes 使用）",
+        help="ETF 池: etf / etf_equity / etf_bond / etf_commodity / etf_money / etf_cross_border / custom",
     ),
     codes: Optional[str] = typer.Option(
         None, "--codes", help="逗号分隔的自定义代码列表（universe=custom 时用）"
@@ -77,7 +76,7 @@ def update_data(
     source: str = typer.Option(
         "auto",
         "--source",
-        help="数据源: akshare(最全但依赖 HTTPS) / baostock(走 TCP,代理友好) / auto(akshare 优先失败回退)",
+        help="数据源: akshare / sina / baostock / auto(东方财富→新浪→baostock)",
     ),
     jobs: int = typer.Option(
         1,
@@ -93,51 +92,37 @@ def update_data(
     ),
 ) -> None:
     """拉取/增量更新日线到本地 DuckDB。"""
-    if source not in ("akshare", "baostock", "auto"):
+    if source not in ("akshare", "sina", "baostock", "auto"):
         raise typer.BadParameter(f"unknown --source: {source}")
     store = DuckStore()
     fetcher = DataFetcher(store=store, source=source)  # type: ignore[arg-type]
 
-    # 1. 股票池
+    # 1. ETF 池与主数据
     if universe == "custom":
         if not codes:
             raise typer.BadParameter("--universe custom 需要配合 --codes")
         target_codes = [c.strip() for c in codes.split(",") if c.strip()]
-    elif universe == "hs300":
-        logger.info("fetching HS300 constituents ...")
-        target_codes = fetcher.fetch_hs300_constituents()
-        store.upsert_index_constituents("000300", target_codes)
-    elif universe == "all":
-        logger.info("fetching full A-share universe ...")
-        df = fetcher.fetch_a_share_universe()
+        etf_master = fetcher.fetch_etf_universe()
+        selected = etf_master[etf_master["code"].isin(target_codes)].copy()
+        missing = sorted(set(target_codes) - set(selected["code"]))
+        if missing:
+            raise typer.BadParameter(f"自定义代码不在 ETF 列表中: {missing}")
+        store.upsert_instruments(selected)
+    elif universe == "etf" or universe.startswith("etf_"):
+        logger.info("fetching ETF universe ...")
+        df = fetcher.fetch_etf_universe()
         store.upsert_instruments(df)
-        target_codes = df[~df["is_st"]]["code"].tolist()
-    elif universe == "main_board":
-        logger.info("fetching main-board A-share universe ...")
-        df = fetcher.fetch_a_share_universe()
-        store.upsert_instruments(df)
-        df = df[~df["is_st"]].copy()
-        df["code"] = df["code"].astype(str).str.zfill(6)
-        target_codes = [c for c in df["code"].tolist() if is_cn_main_board(c)]
-        logger.info(f"main_board filtered: {len(target_codes)} codes")
+        category = universe.removeprefix("etf_") if universe != "etf" else None
+        if category:
+            df = df[df["etf_category"] == category]
+        target_codes = df["code"].tolist()
     else:
         raise typer.BadParameter(f"unknown universe: {universe}")
 
     if limit:
         target_codes = target_codes[:limit]
 
-    # 2. 更新股票基本信息（顺带做 ST 过滤）
-    try:
-        inst_df = fetcher.fetch_a_share_universe()
-        store.upsert_instruments(inst_df)
-        st_set = set(inst_df[inst_df["is_st"]]["code"].tolist())
-        before = len(target_codes)
-        target_codes = [c for c in target_codes if c not in st_set]
-        logger.info(f"filtered ST: {before} -> {len(target_codes)}")
-    except Exception as e:
-        logger.warning(f"instrument fetch failed (continue without ST filter): {e}")
-
-    # 3. 拉日线
+    # 2. 拉 ETF 日线
     effective_since = since
     if recent_days and not full:
         until_d = pd.to_datetime(until).date()
@@ -157,18 +142,6 @@ def update_data(
         jobs=jobs,
     )
     fetcher.close()
-    # 4. 更新市值
-    if len(target_codes) <= 500:
-        console.print("[dim]fetching market caps ...[/dim]")
-        try:
-            mc_fetcher = DataFetcher(store=store, source=source)
-            mc_df = mc_fetcher.fetch_market_caps(target_codes)
-            mc_fetcher.close()
-            if not mc_df.empty:
-                n_mc = store.upsert_market_caps(mc_df)
-                console.print(f"[dim]market caps updated: {n_mc} codes[/dim]")
-        except Exception as e:
-            logger.warning(f"market cap fetch failed (non-critical): {e}")
     stats = store.stats()
     store.close()
 
@@ -198,6 +171,7 @@ def backtest(
     ),
 ) -> None:
     """跑回测并生成报告。"""
+    _disabled_stock_strategy_command()
     from qkquant.backtest.engine import BacktestEngine
     from qkquant.backtest.report import generate_report, print_summary
     from qkquant.risk import RiskConfig
@@ -261,6 +235,7 @@ def compare_cmd(
     ),
 ) -> None:
     """同一股票池 / 时间段上跑多个策略并输出横向对比。"""
+    _disabled_stock_strategy_command()
     from qkquant.backtest.engine import BacktestEngine
     from qkquant.backtest.report import generate_compare_report, print_compare
     from qkquant.risk import RiskConfig
@@ -299,13 +274,109 @@ def compare_cmd(
 # ---------------- factor-test ----------------
 
 
+@app.command("etf-plan")
+def etf_plan_cmd(
+    category: str = typer.Option("equity", "--category", help="ETF 分类"),
+    as_of: Optional[str] = typer.Option(None, "--as-of", help="信号日 YYYY-MM-DD"),
+    capital: float = typer.Option(100_000, "--capital", min=1),
+    score_threshold: float = typer.Option(0.65, "--score-threshold", min=0, max=1),
+    max_positions: int = typer.Option(3, "--max-positions", min=1),
+    corr_limit: float = typer.Option(0.80, "--corr-limit", min=-1, max=1),
+    min_amount: float = typer.Option(50_000_000, "--min-amount", min=0),
+    holdings_file: Optional[str] = typer.Option(None, "--holdings"),
+    chan_filter: bool = typer.Option(True, "--chan-filter/--no-chan-filter", help="启用 ETF 简化缠论入场过滤"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+) -> None:
+    """生成 ETF 收盘信号和次交易日开盘调仓计划。"""
+    from qkquant.config import PROJECT_ROOT
+    from qkquant.etf_signal import (
+        EtfSignalConfig,
+        build_etf_plan,
+        format_etf_plan,
+        save_etf_plan,
+    )
+
+    holdings_path = Path(holdings_file) if holdings_file else PROJECT_ROOT / "config" / "positions.yaml"
+    cfg = EtfSignalConfig(
+        capital=capital,
+        score_threshold=score_threshold,
+        max_positions=max_positions,
+        corr_limit=corr_limit,
+        min_amount_20d=min_amount,
+        chan_filter_enabled=chan_filter,
+    )
+    store = DuckStore()
+    plan = build_etf_plan(
+        store, category=category, as_of=as_of, holdings_path=holdings_path, config=cfg
+    )
+    store.close()
+    text = format_etf_plan(plan)
+    console.print(text)
+    if save:
+        md, js = save_etf_plan(plan, PROJECT_ROOT / "reports" / "etf")
+        console.print(f"[green]report:[/green] {md}")
+        console.print(f"[green]json:[/green] {js}")
+
+
+# ---------------- factor-test ----------------
+
+
+@app.command("etf-chan-test")
+def etf_chan_test_cmd(
+    category: str = typer.Option("equity", "--category"),
+    start: str = typer.Option("2022-01-01", "--start"),
+    end: Optional[str] = typer.Option(None, "--end"),
+    sample_step: int = typer.Option(5, "--sample-step", min=1),
+    min_amount: float = typer.Option(50_000_000, "--min-amount", min=0),
+) -> None:
+    """走步检验 ETF 一买/二买/三买和顶背离的未来收益。"""
+    from qkquant.etf_chan_research import (
+        ChanResearchConfig,
+        evaluate_chan_signals,
+        format_chan_research,
+    )
+
+    store = DuckStore()
+    result = evaluate_chan_signals(
+        store,
+        category=category,
+        start=start,
+        end=end,
+        config=ChanResearchConfig(sample_step=sample_step, min_amount_20d=min_amount),
+    )
+    store.close()
+    console.print(format_chan_research(result))
+
+
+@app.command("etf-backtest")
+def etf_backtest_cmd(
+    start: str = typer.Option("2022-01-01", "--start"),
+    end: Optional[str] = typer.Option(None, "--end"),
+    category: str = typer.Option("equity", "--category"),
+    capital: float = typer.Option(100_000, "--capital", min=1),
+    rebalance_days: int = typer.Option(5, "--rebalance-days", min=1),
+    chan_filter: bool = typer.Option(True, "--chan-filter/--no-chan-filter"),
+) -> None:
+    """回测 ETF 综合得分、风险状态和三买组合策略。"""
+    from qkquant.etf_portfolio_backtest import format_portfolio_backtest, run_etf_portfolio_backtest
+    from qkquant.etf_signal import EtfSignalConfig
+
+    store = DuckStore()
+    result = run_etf_portfolio_backtest(
+        store, start=start, end=end, category=category, rebalance_days=rebalance_days,
+        config=EtfSignalConfig(capital=capital, chan_filter_enabled=chan_filter),
+    )
+    store.close()
+    console.print(format_portfolio_backtest(result))
+
+
 @app.command("factor-test")
 def factor_test_cmd(
     factor: str = typer.Argument(..., help="因子名，例如 mom_20d；运行 list-factors 查看全部"),
     start: str = typer.Option("2022-01-04", "--start", help="回测开始日期"),
     end: str = typer.Option(_today_str(), "--end", help="回测结束日期"),
     universe: str = typer.Option(
-        "hs300", "--universe", help="股票池 hs300 / main_board / custom"
+        "etf", "--universe", help="ETF 池 etf / etf_<category> / custom"
     ),
     codes: Optional[str] = typer.Option(None, "--codes", help="自定义代码列表"),
     primary_forward: int = typer.Option(5, "--primary-forward", help="分组回测持有期（日）"),
@@ -371,7 +442,7 @@ def factor_test_all_cmd(
     start: str = typer.Option("2022-01-04", "--start"),
     end: str = typer.Option(_today_str(), "--end"),
     universe: str = typer.Option(
-        "hs300", "--universe", help="hs300 / main_board / custom"
+        "etf", "--universe", help="ETF 池 etf / etf_<category> / custom"
     ),
     codes: Optional[str] = typer.Option(None, "--codes"),
     primary_forward: int = typer.Option(5, "--primary-forward"),
@@ -418,36 +489,24 @@ def list_factors_cmd() -> None:
 
 
 def _resolve_universe(store: DuckStore, universe: str, codes: Optional[str]) -> list[str]:
-    """股票池解析的小工具（被 backtest / compare / factor-test 复用）。"""
+    """Resolve ETF universes for factor research."""
     u = universe.strip().lower()
     if u == "custom":
         if not codes:
             raise typer.BadParameter("--universe custom 需要 --codes")
         target_codes = [c.strip() for c in codes.split(",") if c.strip()]
-    elif u == "main_board":
-        target_codes = store.load_main_board_codes()
+    elif u == "etf" or u.startswith("etf_"):
+        category = u.removeprefix("etf_") if u != "etf" else None
+        target_codes = store.load_etf_codes(category)
         if not target_codes:
             console.print(
-                "[yellow]本地无主板的非 ST 标的（instruments 为空或未同步）。"
-                "请先运行 `qkquant update-data --universe main_board` 或 `--universe all`。[/yellow]"
-            )
-            raise typer.Exit(code=2)
-    elif u == "hs300":
-        target_codes = store.load_index_constituents("000300")
-        if not target_codes:
-            console.print(
-                "[yellow]请先运行 `qkquant update-data --universe hs300`[/yellow]"
+                "[yellow]本地无 ETF 数据，请先运行 `qkquant update-data --universe etf`[/yellow]"
             )
             raise typer.Exit(code=2)
     else:
         raise typer.BadParameter(
-            f"unknown universe: {universe}. Use hs300 / main_board / custom"
+            f"unknown universe: {universe}. Use etf / etf_<category> / custom"
         )
-
-    inst = store.load_instruments(target_codes)
-    if not inst.empty and "is_st" in inst.columns:
-        st_codes = set(inst[inst["is_st"]]["code"].tolist())
-        target_codes = [c for c in target_codes if c not in st_codes]
     return target_codes
 
 
@@ -495,6 +554,7 @@ def scan_cmd(
     ),
 ) -> None:
     """每日信号扫描：跑历史回测到 as_of，输出今天的 BUY/SELL 名单。"""
+    _disabled_stock_strategy_command()
     from qkquant.config import PROJECT_ROOT
     from qkquant.scan import (
         format_raw_signals,
@@ -742,14 +802,7 @@ def track_cmd(
 @app.command("list-strategies")
 def list_strategies_cmd() -> None:
     """列出所有内置策略。"""
-    table = Table(title="内置策略")
-    table.add_column("name", style="cyan")
-    table.add_column("description")
-    table.add_column("config")
-    for s in list_strategies():
-        cfg = str(s.config_path.relative_to(Path.cwd())) if s.config_path and s.config_path.exists() else "-"
-        table.add_row(s.name, s.description, cfg)
-    console.print(table)
+    console.print("[yellow]个股策略已停用；ETF 策略需在因子通过样本外验证后开发。[/yellow]")
 
 
 # ---------------- stats ----------------

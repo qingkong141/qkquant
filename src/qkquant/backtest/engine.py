@@ -31,8 +31,8 @@ class AShareCommission(bt.CommInfoBase):
     """A 股交易费用：佣金双边万 2.5（最低 5 元）+ 卖出印花税千 1。"""
 
     params = (
-        ("commission_rate", 0.00025),
-        ("commission_min", 5.0),
+        ("commission_rate", 0.00005),
+        ("commission_min", 0.2),
         ("stamp_tax", 0.001),
         ("stocklike", True),
         ("commtype", bt.CommInfoBase.COMM_PERC),

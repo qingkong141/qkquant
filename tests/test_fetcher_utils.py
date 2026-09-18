@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from qkquant.data.fetcher import (
+    DAILY_OUT_COLS,
     DataFetcher,
     bs_adjust,
     from_bs_code,
@@ -215,3 +216,50 @@ def test_bulk_update_daily_parallel_akshare_writes_rows(tmp_path, monkeypatch):
     assert summary["total_rows"] == 2
     assert store.stats()["bars"] == 2
     store.close()
+
+
+@pytest.mark.parametrize(
+    "name,category,settlement_days",
+    [
+        ("沪深300ETF", "equity", 1),
+        ("黄金ETF", "commodity", 0),
+        ("国债ETF", "bond", 0),
+        ("纳指ETF", "cross_border", 0),
+        ("货币ETF", "money", 0),
+    ],
+)
+def test_etf_defaults(name, category, settlement_days):
+    raw = pd.DataFrame({"code": ["510300"], "name": [name]})
+    row = DataFetcher._etf_defaults(raw).iloc[0]
+    assert row["instrument_type"] == "etf"
+    assert row["etf_category"] == category
+    assert row["settlement_days"] == settlement_days
+    assert row["stamp_tax_rate"] == 0
+
+
+def test_sina_etf_daily_normalization(monkeypatch):
+    import akshare as ak
+
+    raw = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            "open": [1.0, 1.1], "high": [1.2, 1.2], "low": [0.9, 1.0],
+            "close": [1.1, 1.155], "volume": [1000, 1200], "amount": [1100, 1386],
+        }
+    )
+    monkeypatch.setattr(ak, "fund_etf_hist_sina", lambda symbol: raw)
+    fetcher = DataFetcher(source="sina")
+    df = fetcher._fetch_etf_daily_sina("510300", "2024-01-01", "2024-01-31", "qfq")
+    assert list(df.columns) == DAILY_OUT_COLS
+    assert len(df) == 2
+    assert abs(df.iloc[1]["pct_chg"] - 5.0) < 1e-12
+
+
+def test_auto_etf_universe_falls_back_to_sina(monkeypatch):
+    fetcher = DataFetcher(source="auto")
+    expected = DataFetcher._etf_defaults(pd.DataFrame({"code": ["510300"], "name": ["300ETF"]}))
+    monkeypatch.setattr(fetcher, "_fetch_etf_universe_ak", lambda: (_ for _ in ()).throw(RuntimeError("proxy")))
+    monkeypatch.setattr(fetcher, "_fetch_etf_universe_sina", lambda: expected)
+    monkeypatch.setattr(fetcher, "_fetch_etf_universe_bs", lambda: (_ for _ in ()).throw(AssertionError("should not reach baostock")))
+    result = fetcher.fetch_etf_universe()
+    assert result.iloc[0]["code"] == "510300"

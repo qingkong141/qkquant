@@ -96,7 +96,11 @@ def align_valid(
     return f, r
 
 
-def build_tradeable_mask(panel: Panel, limit_pct: float = 9.8) -> pd.DataFrame:
+def build_tradeable_mask(
+    panel: Panel,
+    limit_pct: float = 9.8,
+    limit_pct_by_code: dict[str, float] | None = None,
+) -> pd.DataFrame:
     """构建"次日可交易"mask：排除今日涨停/跌停/停牌。
 
     - 停牌：pct_chg 或 close 为 NaN
@@ -106,7 +110,14 @@ def build_tradeable_mask(panel: Panel, limit_pct: float = 9.8) -> pd.DataFrame:
     close = panel["close"]
     if "pct_chg" in panel:
         pct = panel["pct_chg"]
-        tradeable = close.notna() & pct.notna() & (pct.abs() < limit_pct)
+        if limit_pct_by_code:
+            limits = pd.Series(
+                {code: value * 100 for code, value in limit_pct_by_code.items()},
+                dtype=float,
+            ).reindex(pct.columns).fillna(limit_pct)
+            tradeable = close.notna() & pct.notna() & pct.abs().lt(limits, axis="columns")
+        else:
+            tradeable = close.notna() & pct.notna() & (pct.abs() < limit_pct)
     else:
         tradeable = close.notna()
     return tradeable

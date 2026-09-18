@@ -19,6 +19,8 @@ def test_registry_has_expected_factors():
     expected = {
         "mom_20d", "mom_60d", "mom_120d", "reversal_5d",
         "vol_20d", "turnover_20d", "amihud_20d", "rsi_14",
+        "risk_adjusted_mom_60d", "trend_quality_60d", "downside_vol_20d",
+        "max_drawdown_60d", "amount_20d", "amount_ratio_5_20",
     }
     assert expected.issubset(names), f"missing factors: {expected - names}"
 
@@ -95,3 +97,21 @@ def test_tradeable_mask_excludes_limit(tmp_store):
 def test_all_factors_have_expected_sign():
     for spec in FACTOR_REGISTRY.values():
         assert spec.expected_sign in (+1, -1), f"{spec.name} sign invalid"
+
+
+def test_etf_factor_values_are_finite_after_warmup(tmp_store):
+    panel = load_panel(tmp_store)
+    for name in (
+        "risk_adjusted_mom_60d", "trend_quality_60d", "downside_vol_20d",
+        "max_drawdown_60d", "amount_20d", "amount_ratio_5_20",
+    ):
+        values = compute_factor_values(panel, name).iloc[80:]
+        assert np.isfinite(values.to_numpy()).any(), f"{name} has no finite values"
+
+
+def test_tradeable_mask_uses_per_instrument_limit(tmp_store):
+    panel = load_panel(tmp_store)
+    panel["pct_chg"].iloc[10, 0] = 15.0
+    code = panel["pct_chg"].columns[0]
+    mask = build_tradeable_mask(panel, limit_pct_by_code={code: 0.20})
+    assert mask.iloc[10, 0]
