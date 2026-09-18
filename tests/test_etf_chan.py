@@ -19,9 +19,12 @@ def test_chan_output_contains_divergence_fields():
     payload = result.to_dict()
     assert "divergence" in payload
     assert "divergence_strength" in payload
+    assert "confirmation_date" in payload
+    assert "signal_age_bars" in payload
     assert result.state in {
         "first_buy_divergence", "top_divergence", "second_buy", "third_buy",
         "second_buy_watch", "structure_broken", "no_entry", "insufficient_fractals",
+        "third_buy_active", "third_buy_invalid_order", "missing_latest_bar",
     }
 
 

@@ -10,7 +10,12 @@
 # 调度建议：每个交易日 18:30 触发（东方财富日线约 17:30 发布，留 1h 余量）
 # 注意：16:30 太早，当日数据还未发布；baostock 天然 T+1 滞后不适用
 
-$ErrorActionPreference = "Continue"
+# The old stock workflow is retired. Fail before changing environment, fetching,
+# sending notifications, or updating positions. ETF records require audited data
+# and an explicit daily paper-account snapshot; see docs/ETF_WORKFLOW.md.
+throw "Legacy stock daily scan is disabled. Use the audited ETF workflow in docs/ETF_WORKFLOW.md."
+
+$ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot

@@ -274,48 +274,48 @@ def compare_cmd(
 # ---------------- factor-test ----------------
 
 
+@app.command("etf-paper-init")
+def etf_paper_init_cmd(
+    account: Optional[str] = typer.Option(None, "--account", help="独立人工模拟账户文件"),
+    capital: float = typer.Option(100_000, "--capital", min=1),
+) -> None:
+    """建立空仓人工模拟账户；不连接券商、不自动成交。"""
+    from qkquant.config import PROJECT_ROOT
+    from qkquant.etf_paper import create_paper_account
+
+    path = Path(account) if account else PROJECT_ROOT / "data" / "paper" / "etf_account.json"
+    try:
+        create_paper_account(path, capital)
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"人工模拟账户已建立: {path}")
+
+
 @app.command("etf-plan")
 def etf_plan_cmd(
-    category: str = typer.Option("equity", "--category", help="ETF 分类"),
-    as_of: Optional[str] = typer.Option(None, "--as-of", help="信号日 YYYY-MM-DD"),
-    capital: float = typer.Option(100_000, "--capital", min=1),
-    score_threshold: float = typer.Option(0.65, "--score-threshold", min=0, max=1),
-    max_positions: int = typer.Option(3, "--max-positions", min=1),
-    corr_limit: float = typer.Option(0.80, "--corr-limit", min=-1, max=1),
-    min_amount: float = typer.Option(50_000_000, "--min-amount", min=0),
-    holdings_file: Optional[str] = typer.Option(None, "--holdings"),
-    chan_filter: bool = typer.Option(True, "--chan-filter/--no-chan-filter", help="启用 ETF 简化缠论入场过滤"),
-    save: bool = typer.Option(True, "--save/--no-save"),
+    as_of: Optional[str] = typer.Option(None, "--as-of", help="收盘日；历史日期必须明确指定"),
+    snapshot_dir: Optional[str] = typer.Option(None, "--snapshot-dir", help="已核验快照目录"),
+    account: Optional[str] = typer.Option(None, "--account", help="人工模拟账户文件"),
+    account_close: Optional[str] = typer.Option(None, "--account-close", help="本日现金/份额 JSON；次日起必填"),
 ) -> None:
-    """生成 ETF 收盘信号和次交易日开盘调仓计划。"""
+    """用可信行情及持续账户记录生成下一交易日目标，并归档本日风控。"""
+    import json
     from qkquant.config import PROJECT_ROOT
-    from qkquant.etf_signal import (
-        EtfSignalConfig,
-        build_etf_plan,
-        format_etf_plan,
-        save_etf_plan,
-    )
+    from qkquant.data.verified import open_verified_etf_input
+    from qkquant.etf_paper import format_paper_plan, record_paper_close
 
-    holdings_path = Path(holdings_file) if holdings_file else PROJECT_ROOT / "config" / "positions.yaml"
-    cfg = EtfSignalConfig(
-        capital=capital,
-        score_threshold=score_threshold,
-        max_positions=max_positions,
-        corr_limit=corr_limit,
-        min_amount_20d=min_amount,
-        chan_filter_enabled=chan_filter,
-    )
-    store = DuckStore()
-    plan = build_etf_plan(
-        store, category=category, as_of=as_of, holdings_path=holdings_path, config=cfg
-    )
-    store.close()
-    text = format_etf_plan(plan)
-    console.print(text)
-    if save:
-        md, js = save_etf_plan(plan, PROJECT_ROOT / "reports" / "etf")
-        console.print(f"[green]report:[/green] {md}")
-        console.print(f"[green]json:[/green] {js}")
+    path = Path(account) if account else PROJECT_ROOT / "data" / "paper" / "etf_account.json"
+    if not path.exists():
+        raise typer.BadParameter("尚无人工模拟账户。请先运行 etf-paper-init；不读取旧实盘持仓文件。")
+    try:
+        snapshot = json.loads(Path(account_close).read_text(encoding="utf-8")) if account_close else None
+        with open_verified_etf_input(snapshot_dir) as data:
+            day = as_of or date.today().isoformat()
+            record = record_paper_close(path, data, day, snapshot)
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(format_paper_plan(record))
+    console.print(f"[green]本日账户、风控和数据来源已归档:[/green] {path}")
 
 
 # ---------------- factor-test ----------------
@@ -350,24 +350,50 @@ def etf_chan_test_cmd(
 
 @app.command("etf-backtest")
 def etf_backtest_cmd(
-    start: str = typer.Option("2022-01-01", "--start"),
+    start: str = typer.Option("2024-01-01", "--start", help="评价起点；保留完整预热和账户历史"),
     end: Optional[str] = typer.Option(None, "--end"),
-    category: str = typer.Option("equity", "--category"),
+    snapshot_dir: Optional[str] = typer.Option(None, "--snapshot-dir", help="已核验的固定权益 ETF 池快照目录"),
     capital: float = typer.Option(100_000, "--capital", min=1),
-    rebalance_days: int = typer.Option(5, "--rebalance-days", min=1),
+    rebalance_days: int = typer.Option(10, "--rebalance-days", min=1),
+    risk_control: bool = typer.Option(True, "--risk-control/--no-risk-control", help="每日回撤检查，次日开盘减仓（研究回测）"),
+    max_exposure: float = typer.Option(0.40, "--max-exposure", min=0.01, max=1.0),
+    daily_entries: bool = typer.Option(False, "--daily-entries/--scheduled-entries", help="研究：非调仓日按新信号补空位，不换仓"),
     chan_filter: bool = typer.Option(True, "--chan-filter/--no-chan-filter"),
 ) -> None:
     """回测 ETF 综合得分、风险状态和三买组合策略。"""
     from qkquant.etf_portfolio_backtest import format_portfolio_backtest, run_etf_portfolio_backtest
+    from qkquant.etf_drawdown import DrawdownConfig
+    from qkquant.data.verified import open_verified_etf_input
     from qkquant.etf_signal import EtfSignalConfig
 
-    store = DuckStore()
-    result = run_etf_portfolio_backtest(
-        store, start=start, end=end, category=category, rebalance_days=rebalance_days,
-        config=EtfSignalConfig(capital=capital, chan_filter_enabled=chan_filter),
-    )
-    store.close()
+    try:
+        with open_verified_etf_input(snapshot_dir) as data:
+            if end and pd.Timestamp(end) > pd.Timestamp(data.manifest["end"]):
+                raise ValueError("requested end exceeds the verified snapshot; build a new audited snapshot")
+            if end and pd.Timestamp(start) > pd.Timestamp(end):
+                raise ValueError("start must not follow end")
+            # Preserve the calendar origin and warmup phase. --start controls
+            # the displayed evaluation window, never rebalance/risk resets.
+            panel = {key: frame.loc[:end] if end else frame for key, frame in data.panel.items()}
+            result = run_etf_portfolio_backtest(
+                data.store, panel=panel, rebalance_days=rebalance_days,
+                config=EtfSignalConfig(capital=capital, chan_filter_enabled=chan_filter),
+                risk_config=DrawdownConfig(max_exposure=max_exposure) if risk_control else None,
+                daily_entries=daily_entries,
+            )
+            console.print(f"可信快照截止: {data.manifest['end']} | 纳入 {len(data.metadata['accepted_codes'])} 只 ETF")
+            if pd.Timestamp(start) > result["equity"].index[0]:
+                from qkquant.etf_portfolio_backtest import _metrics
+                curve = result["equity"]
+                selected = curve.loc[start:]
+                if selected.empty:
+                    raise ValueError("requested evaluation window has no portfolio sessions")
+                prior = curve.loc[curve.index < selected.index[0]].tail(1)
+                console.print(f"连续账户评价窗口 {selected.index[0].date()} ~ {selected.index[-1].date()}: {_metrics(pd.concat([prior, selected]))}")
+    except (OSError, ValueError, RuntimeError, KeyError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
     console.print(format_portfolio_backtest(result))
+    console.print("研究模拟口径：复权价格与模拟份额，未还原真实分红现金账务；不能作为实际持仓数量。")
 
 
 @app.command("factor-test")
@@ -802,7 +828,8 @@ def track_cmd(
 @app.command("list-strategies")
 def list_strategies_cmd() -> None:
     """列出所有内置策略。"""
-    console.print("[yellow]个股策略已停用；ETF 策略需在因子通过样本外验证后开发。[/yellow]")
+    console.print("ETF 综合评分 + 市场宽度 + 三买新确认（研究中）：10 日调仓、仓位上限 40%、每日回撤检查。")
+    console.print("etf-backtest 使用核验快照；etf-plan 使用独立人工模拟账户。个股策略已停用。")
 
 
 # ---------------- stats ----------------

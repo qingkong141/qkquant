@@ -25,6 +25,12 @@ class ChanSignal:
     divergence: str | None
     divergence_strength: float | None
     reason: str
+    previous_high_date: str | None = None
+    breakout_high_date: str | None = None
+    pullback_date: str | None = None
+    confirmation_date: str | None = None
+    signal_age_bars: int | None = None
+    distance_to_pullback: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -49,9 +55,11 @@ def classify_chan_structure(
     second_buy: latest confirmed swing low is above the prior swing low, price
     is above a rising MA20, and price has reclaimed the latest swing high.
 
-    third_buy: price previously broke the prior swing high and the latest
-    confirmed pullback low stayed above that old high within tolerance.
+    third_buy: ordered old high -> breakout high -> pullback low, on the
+    pullback confirmation bar only. third_buy_active is continuation, not entry.
     """
+    if not isinstance(fractal_order, int) or fractal_order < 1:
+        raise ValueError("fractal_order must be a positive integer")
     frame = pd.concat(
         {
             "close": pd.to_numeric(close, errors="coerce"),
@@ -59,7 +67,11 @@ def classify_chan_structure(
             "low": pd.to_numeric(low if low is not None else close, errors="coerce"),
         },
         axis=1,
-    ).dropna().tail(200)
+    )
+    if not frame.empty and frame.iloc[-1].isna().any():
+        return ChanSignal("missing_latest_bar", False, np.nan, None, None, None, None,
+                          None, None, None, "latest_bar_must_be_complete")
+    frame = frame.dropna().tail(200)
     if len(frame) < 30:
         return ChanSignal("insufficient_data", False, np.nan, None, None, None, None, None, None, None, "need_at_least_30_bars")
 
@@ -106,7 +118,25 @@ def classify_chan_structure(
         and price > ma20
     )
     if third_buy:
-        return ChanSignal("third_buy", True, price, last_low, previous_low, last_high, previous_high, ma20, divergence, divergence_strength, "breakout_then_pullback_held_above_old_high")
+        old_date, breakout_date = swing_highs.index[-2], swing_highs.index[-1]
+        pullback_date = swing_lows.index[-1]
+        confirmation_pos = frame.index.get_loc(pullback_date) + fractal_order
+        age = len(frame) - 1 - confirmation_pos
+        details = dict(
+            previous_high_date=str(old_date), breakout_high_date=str(breakout_date),
+            pullback_date=str(pullback_date), confirmation_date=str(frame.index[confirmation_pos]),
+            signal_age_bars=age, distance_to_pullback=price / last_low - 1,
+        )
+        if not old_date < breakout_date < pullback_date:
+            return ChanSignal("third_buy_invalid_order", False, price, last_low, previous_low,
+                              last_high, previous_high, ma20, divergence, divergence_strength,
+                              "require_old_high_then_breakout_high_then_pullback_low", **details)
+        fresh = age == 0
+        return ChanSignal("third_buy" if fresh else "third_buy_active", fresh, price,
+                          last_low, previous_low, last_high, previous_high, ma20,
+                          divergence, divergence_strength,
+                          "ordered_pullback_just_confirmed" if fresh else "old_pullback_no_new_entry",
+                          **details)
 
     # A higher low followed by renewed strength is the mechanical second-buy proxy.
     second_buy = (
@@ -127,4 +157,13 @@ def classify_chan_structure(
     return ChanSignal(state, False, price, last_low, previous_low, last_high, previous_high, ma20, divergence, divergence_strength, reason)
 
 
-__all__ = ["ChanSignal", "classify_chan_structure"]
+def chan_selection_allowed(signal: ChanSignal, entry_states: tuple[str, ...], holding: bool = False) -> bool:
+    """An old third-buy may retain a holding but must never open a new one."""
+    if signal.state == "third_buy_active":
+        return holding and "third_buy" in entry_states
+    if signal.state == "third_buy_invalid_order":
+        return False
+    return signal.allowed and signal.state in entry_states
+
+
+__all__ = ["ChanSignal", "chan_selection_allowed", "classify_chan_structure"]

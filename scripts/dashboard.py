@@ -5,6 +5,10 @@
 
 from __future__ import annotations
 
+raise SystemExit(
+    "旧个股看板已停用。当前 ETF 入口：etf-backtest / etf-plan；使用说明见 docs/ETF_WORKFLOW.md。"
+)
+
 import sys
 from datetime import date, timedelta
 from pathlib import Path

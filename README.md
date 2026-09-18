@@ -1,5 +1,26 @@
 # qkquant
 
+当前维护方向：**一套 ETF 综合评分 + 市场宽度 + 三买新确认策略，处于研究验证阶段。**
+
+- 主入口 `etf-backtest` / `etf-plan` 默认读取经审计的 ETF 快照，禁止静默回退旧库。
+- 10 个交易日调仓、40% 目标仓位上限、每日回撤控制；回测和计划共用收盘决策函数。
+- `etf-plan` 使用独立人工模拟账户；保存现金、份额、历史净值峰值和每次计划，不虚构成交。
+- 旧个股策略、每日推送脚本和旧看板已停用。没有券商下单实现。
+- 稳定盈利和未来最大回撤 10% **均未获证明**。代码测试通过不等于策略有效。
+
+安装后从 [ETF 当前使用说明](docs/ETF_WORKFLOW.md) 开始；数据来源见 [复权快照说明](docs/ETF_ADJUSTED_SNAPSHOT.md)。
+
+```powershell
+.\.venv\Scripts\qkquant.exe etf-backtest
+.\.venv\Scripts\qkquant.exe list-strategies
+```
+
+`config/settings.yaml` 的旧库只供历史研究/通用数据工具使用；上述两个主入口另行强制校验快照。
+
+## 历史版本资料（以下功能清单与命令不代表当前可用入口）
+
+以下保留旧版本记录，包含已移除的个股策略、旧成本及推送流程，请勿用于当前 ETF 策略操作。
+
 A 股量化交易 MVP。从**回测研究**走到**半自动信号推送**，不触碰真实资金。
 
 技术栈：Python 3.12 · `uv` · DuckDB · akshare/baostock · backtrader · pydantic · loguru · typer · ServerChan

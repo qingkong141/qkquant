@@ -33,6 +33,8 @@ reports/
 src/qkquant/data/*
 !src/qkquant/data/fetcher.py
 !src/qkquant/data/storage.py
+!src/qkquant/data/etf_snapshot.py
+!src/qkquant/data/verified.py
 *.duckdb
 *.duckdb.wal
 *.sqlite

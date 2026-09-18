@@ -367,7 +367,9 @@ class DataFetcher:
         end: date | str,
         adjust: str | None = None,
     ) -> pd.DataFrame:
-        adj = adjust or self.cfg.fetcher.adjust
+        adj = self.cfg.fetcher.adjust if adjust is None else adjust
+        if adj.lower() == "none":
+            adj = ""
         is_etf = False
         if self.store is not None:
             inst = self.store.load_instruments([str(code).zfill(6)])
@@ -423,6 +425,8 @@ class DataFetcher:
 
     def _fetch_etf_daily_sina(self, code: str, start, end, adjust: str) -> pd.DataFrame:
         """Sina ETF daily bars. Sina does not expose an adjustment selector."""
+        if adjust not in ("", "none"):
+            raise FetchError("Sina ETF history has no verified qfq/hfq adjustment; request unadjusted data explicitly")
         import akshare as ak
 
         pure_code = str(code).zfill(6)
@@ -450,7 +454,7 @@ class DataFetcher:
                 "amount": pd.to_numeric(raw["amount"], errors="coerce"),
                 "pct_chg": close.pct_change(fill_method=None) * 100,
                 "turnover": None,
-                "adjust": adjust,
+                "adjust": "",
             }
         )
         return df.dropna(subset=["close"])[DAILY_OUT_COLS].reset_index(drop=True)
@@ -573,7 +577,9 @@ class DataFetcher:
         if self.store is None:
             raise RuntimeError("bulk_update_daily requires DuckStore")
 
-        adj = adjust or self.cfg.fetcher.adjust
+        adj = self.cfg.fetcher.adjust if adjust is None else adjust
+        if adj.lower() == "none":
+            adj = ""
         start_d = pd.to_datetime(start).date()
         end_d = pd.to_datetime(end).date()
         jobs = max(1, int(jobs))

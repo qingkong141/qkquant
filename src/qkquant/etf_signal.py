@@ -14,7 +14,7 @@ import pandas as pd
 import yaml
 
 from qkquant.data.storage import DuckStore
-from qkquant.etf_chan import classify_chan_structure
+from qkquant.etf_chan import chan_selection_allowed, classify_chan_structure
 from qkquant.factors.library import trend_quality_60d
 from qkquant.factors.pipeline import load_panel
 
@@ -150,6 +150,10 @@ def build_etf_plan(
     themes: set[str] = set()
     corr_data = ret.loc[:signal_date].tail(cfg.corr_window)
     chan_signals: dict[str, dict] = {}
+    all_holdings = load_holdings(holdings_path)
+    etf_codes = set(store.load_etf_codes())
+    holdings = {code: row for code, row in all_holdings.items() if code in etf_codes}
+    ignored = sorted(set(all_holdings) - etf_codes)
     for code in frame.index:
         info = inst.loc[code]
         name = str(info.get("name", code))
@@ -161,7 +165,8 @@ def build_etf_plan(
             tolerance=cfg.chan_tolerance,
         )
         chan_signals[code] = chan.to_dict()
-        if cfg.chan_filter_enabled and chan.state not in cfg.chan_entry_states:
+        held = int(holdings.get(code, {}).get("qty", 0) or 0) > 0
+        if cfg.chan_filter_enabled and not chan_selection_allowed(chan, cfg.chan_entry_states, held):
             rejected.append({"code": code, "reason": f"chan:{chan.state}", "chan": chan.to_dict()})
             continue
         theme = theme_key(name, info.get("benchmark_code"))
@@ -182,10 +187,6 @@ def build_etf_plan(
     if exposure == 0:
         selected = []
 
-    all_holdings = load_holdings(holdings_path)
-    etf_codes = set(store.load_etf_codes())
-    holdings = {code: row for code, row in all_holdings.items() if code in etf_codes}
-    ignored = sorted(set(all_holdings) - etf_codes)
     target_weight = exposure / len(selected) if selected else 0.0
     chosen: list[dict] = []
     actions: list[dict] = []
@@ -196,6 +197,8 @@ def build_etf_plan(
         lot = int(info.get("lot_size") or 100)
         target_qty = math.floor(cfg.capital * target_weight / price / lot) * lot
         current_qty = int(holdings.get(code, {}).get("qty", 0) or 0)
+        if cfg.chan_filter_enabled and chan_signals[code]["state"] == "third_buy_active":
+            target_qty = min(target_qty, current_qty)
         delta = target_qty - current_qty
         value = abs(delta) * price
         cost = estimated_cost(value, 0.0, cfg)
@@ -211,6 +214,7 @@ def build_etf_plan(
             "chan_state": chan_signals[code]["state"],
             "divergence": chan_signals[code]["divergence"],
             "divergence_strength": chan_signals[code]["divergence_strength"],
+            "chan_structure": chan_signals[code],
         })
         actions.append(_action(code, str(info.get("name", code)), action, abs(delta), current_qty, target_qty, price, cost, cost_rate, reason, cfg))
 
@@ -249,16 +253,22 @@ def _action(code: str, name: str, action: str, qty: int, current_qty: int, targe
 def format_etf_plan(plan: dict) -> str:
     lines = [f"# ETF 次日开盘计划 | {plan['as_of']}", ""]
     lines.append(f"状态: **{plan['regime']}** | 宽度: {plan['market_breadth']:.1%} | 目标仓位: {plan['target_exposure']:.0%}")
-    lines += ["", "## 入选", "", "| ETF | 得分 | 60日 | 120日 | 缠论状态 | 背离 | 目标权重 |", "|---|---:|---:|---:|---|---|---:|"]
+    lines += ["", "## 入选", "", "| ETF | 得分 | 60日 | 120日 | 缠论状态 | 背离 | 目标权重 | 确认后K线数 | 距回踩低点 |", "|---|---:|---:|---:|---|---|---:|---:|---:|"]
     for row in plan["selected"]:
-        lines.append(f"| {row['code']} {row['name']} | {row['score']:.3f} | {row['mom60']:.2%} | {row['mom120']:.2%} | {row['chan_state']} | {row['divergence'] or '-'} | {row['target_weight']:.1%} |")
+        structure = row.get("chan_structure", {})
+        age = structure.get("signal_age_bars")
+        distance = structure.get("distance_to_pullback")
+        age_text = str(age) if age is not None else "-"
+        distance_text = f"{distance:.1%}" if distance is not None else "-"
+        lines.append(f"| {row['code']} {row['name']} | {row['score']:.3f} | {row['mom60']:.2%} | {row['mom120']:.2%} | {row['chan_state']} | {row['divergence'] or '-'} | {row['target_weight']:.1%} | {age_text} | {distance_text} |")
     if not plan["selected"]:
-        lines.append("| 无 | - | - | - | - | - | 0% |")
+        lines.append("| 无 | - | - | - | - | - | 0% | - | - |")
     lines += ["", "## 次日动作", "", "| 动作 | ETF | 数量 | 限价参考 | 预估成本 | 原因 |", "|---|---|---:|---:|---:|---|"]
     for row in plan["actions"]:
         limit_text = "-" if row["limit_price"] is None else f"{row['limit_price']:.3f}"
         lines.append(f"| {row['action']} | {row['code']} {row['name']} | {row['qty']} | {limit_text} | {row['estimated_cost']:.2f} | {row['reason']} |")
     lines += ["", "仅使用收盘信息；次交易日开盘执行；开盘缺口超阈值取消。"]
+    lines.append("third_buy 为回踩刚确认；third_buy_active 为旧结构，仅允许已有仓位保留或减仓，不新增。目标权重为组合预算，旧结构实际数量以动作表为准。")
     if plan["ignored_non_etf_holdings"]:
         lines.append("已忽略非 ETF 旧持仓: " + ", ".join(plan["ignored_non_etf_holdings"]))
     return "\n".join(lines)

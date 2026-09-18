@@ -8,6 +8,7 @@ import pytest
 from qkquant.data.fetcher import (
     DAILY_OUT_COLS,
     DataFetcher,
+    FetchError,
     bs_adjust,
     from_bs_code,
     to_bs_code,
@@ -249,10 +250,55 @@ def test_sina_etf_daily_normalization(monkeypatch):
     )
     monkeypatch.setattr(ak, "fund_etf_hist_sina", lambda symbol: raw)
     fetcher = DataFetcher(source="sina")
-    df = fetcher._fetch_etf_daily_sina("510300", "2024-01-01", "2024-01-31", "qfq")
+    df = fetcher._fetch_etf_daily_sina("510300", "2024-01-01", "2024-01-31", "")
     assert list(df.columns) == DAILY_OUT_COLS
     assert len(df) == 2
+    assert df["adjust"].eq("").all()
     assert abs(df.iloc[1]["pct_chg"] - 5.0) < 1e-12
+
+
+@pytest.mark.parametrize("adjust", ["qfq", "hfq"])
+def test_sina_rejects_unverified_adjustment(monkeypatch, adjust):
+    import akshare as ak
+
+    def should_not_fetch(**kwargs):
+        raise AssertionError("unsupported adjustment must fail before network access")
+
+    monkeypatch.setattr(ak, "fund_etf_hist_sina", should_not_fetch)
+    with pytest.raises(FetchError, match="no verified qfq/hfq"):
+        DataFetcher(source="sina")._fetch_etf_daily_sina(
+            "510300", "2024-01-01", "2024-01-31", adjust
+        )
+
+
+@pytest.mark.parametrize("adjust", ["", "none"])
+def test_explicit_unadjusted_daily_does_not_use_default(monkeypatch, adjust):
+    fetcher = DataFetcher(source="akshare")
+    received = []
+    monkeypatch.setattr(fetcher, "_fetch_daily_ak", lambda code, start, end, adj: received.append(adj) or pd.DataFrame())
+    fetcher.fetch_daily("000001", "2024-01-01", "2024-01-31", adjust=adjust)
+    assert received == [""]
+
+
+def test_bulk_update_preserves_explicit_unadjusted(monkeypatch, tmp_store):
+    fetcher = DataFetcher(store=tmp_store, source="akshare")
+    received = []
+    monkeypatch.setattr(fetcher, "fetch_daily", lambda code, start, end, adjust: received.append(adjust) or pd.DataFrame())
+    fetcher.bulk_update_daily(["000001"], "2024-01-01", "2024-01-31", adjust="", incremental=False)
+    assert received == [""]
+
+
+def test_adjusted_etf_fallback_never_accepts_sina_raw(monkeypatch, tmp_store):
+    import akshare as ak
+
+    monkeypatch.setattr(ak, "fund_etf_hist_sina", lambda **kwargs: pd.DataFrame({"date": ["2024-01-02"], "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "amount": [1000], "volume": [1000]}))
+    tmp_store.upsert_instruments(DataFetcher._etf_defaults(pd.DataFrame({"code": ["510300"], "name": ["300ETF"]})))
+    fetcher = DataFetcher(store=tmp_store, source="auto")
+    monkeypatch.setattr(fetcher, "_fetch_etf_daily_ak", lambda *args: (_ for _ in ()).throw(ConnectionError("offline")))
+    received = []
+    monkeypatch.setattr(fetcher, "_fetch_daily_bs", lambda code, start, end, adj: received.append(adj) or pd.DataFrame())
+    fetcher.fetch_daily("510300", "2024-01-01", "2024-01-31", adjust="qfq")
+    assert received == ["qfq"]
 
 
 def test_auto_etf_universe_falls_back_to_sina(monkeypatch):
