@@ -829,7 +829,8 @@ def track_cmd(
 def list_strategies_cmd() -> None:
     """列出所有内置策略。"""
     console.print("ETF 综合评分 + 市场宽度 + 三买新确认（研究中）：10 日调仓、仓位上限 40%、每日回撤检查。")
-    console.print("etf-backtest 使用核验快照；etf-plan 使用独立人工模拟账户。个股策略已停用。")
+    console.print("etf-backtest 使用核验快照；etf-plan 使用独立人工模拟账户。旧个股策略入口已停用。")
+    console.print("纯欧奈尔独立研究：python scripts/research_oneil.py（首次取数增加 --fetch）；见 docs/ONEIL_RESEARCH.md。")
 
 
 # ---------------- stats ----------------

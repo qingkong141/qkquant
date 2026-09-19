@@ -1,5 +1,7 @@
 # qkquant
 
+新增：[纯欧奈尔研究与核验记录](docs/ONEIL_RESEARCH.md)。`research_oneil.py`保留原快照试跑；历史股票池和原财报核验分别见`research_oneil_universe.py`、`research_oneil_historical_candidates.py`。原快照零成交结论已有后续更正，研究尚未完成收益有效性验收。
+
 当前维护方向：**一套 ETF 综合评分 + 市场宽度 + 三买新确认策略，处于研究验证阶段。**
 
 - 主入口 `etf-backtest` / `etf-plan` 默认读取经审计的 ETF 快照，禁止静默回退旧库。
